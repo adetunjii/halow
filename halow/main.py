@@ -1,0 +1,30 @@
+from pettingzoo import make, parallel_registry, register
+from pettingzoo.test import parallel_api_test
+from environment import CustomEnvironment
+import matplotlib.pyplot as plt
+
+if __name__ == "__main__":
+    # env = CustomEnvironment()
+    # parallel_api_test(env, num_cycles=1_000_000)
+    
+    register("parallel", "thesis/CustomGridv0", CustomEnvironment)
+    
+    assert "thesis/CustomGridv0" in parallel_registry
+    # parallel_api_test(env, num_cycles=1_000_000)
+
+    env = make("parallel", "thesis/CustomGridv0")
+    observations, infos = env.reset(seed=42)
+    
+    done = False
+    
+    for _ in range(1000):
+        # this is where you would insert your policy
+        actions = {agent: env.action_space(agent).sample() for agent in env.agents}
+
+        observations, rewards, terminations, truncations, infos = env.step(actions)
+        done = all(terminations.values()) or all(truncations.values())
+        env.render()
+                
+    env.close()
+
+    plt.show(block=True)

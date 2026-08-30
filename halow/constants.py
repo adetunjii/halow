@@ -1,0 +1,26 @@
+neighboring_cells = [(-1, 0), (1, 0), (0, -1), (0, 1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+
+# belief states
+UNKNOWN = 0
+FREE = 1
+OCCUPIED = 2
+
+# belief thresholds
+FREE_THRESHOLD = 0.4
+UNKNOWN_THRESHOLD = 0.5
+OBSTACLE_THRESHOLD = 0.6
+
+COMMUNICATION_NOISE_SCALE = 0.1
+
+PATH_RESOLUTION=0.3
+
+HEIGHT = 30
+WIDTH = 30
+
+NUM_FRONTIERS = 10
+
+MAX_STEPS_PER_EPISODE = 500
+BATTERY_DEPLETION_RATE_PER_STEP = 1.0 / MAX_STEPS_PER_EPISODE
+DRONE_STEPS = 3
+ALPHA = 0.1
+COVERAGE_TARGET = 0.9 # 90% coverage of the map
