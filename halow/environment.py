@@ -4,10 +4,9 @@ from gymnasium.spaces.space import Space
 from pettingzoo import ParallelEnv
 import numpy as np
 from agent import Agent, ConfidenceLevels, UpdateLimit
-from map import generate_map
 import constants
 from copy import copy
-from halow.helpers import get_observable_cells, normalize_pos, interpolate_path, astar_search, get_animation_frames
+from halow.helpers import get_observable_cells, normalize_pos, interpolate_path, astar_search, get_animation_frames, generate_map
 from halow.frontiers import top_k_frontiers, pack_frontiers
 from collections import deque
 import matplotlib.pyplot as plt

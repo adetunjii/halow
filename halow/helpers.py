@@ -1,7 +1,9 @@
 import numpy as np
 import heapq
 from PIL import Image, ImageSequence
-from halow.constants import neighboring_cells, HEIGHT, WIDTH, PATH_RESOLUTION
+from halow.constants import neighboring_cells, HEIGHT, WIDTH, PATH_RESOLUTION, FREE, OCCUPIED
+import random
+from noise import pnoise2
 
 def get_observable_cells(belief_map: np.ndarray, current_pos: tuple[int, int], radius: int):
     """Get agent's observable cells given its radius"""
@@ -108,3 +110,18 @@ def get_animation_frames(path: str):
         return frames
     except FileNotFoundError:
         print(f"image path {path} does not exist")
+
+def generate_map(height, width, seed=None, scale=0.15, threshold=0.2):
+    grid = np.full((height, width), FREE, dtype=np.float32)
+    
+    if seed is None:
+        seed = random.randint(0, 1000)
+        
+    for r in range(height):
+        for c in range(width):
+            value = pnoise2(c * scale + seed, r * scale + seed)
+            
+            if value > threshold:
+                grid[r, c] = OCCUPIED
+    
+    return grid
