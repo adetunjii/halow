@@ -8,6 +8,7 @@ import constants
 from copy import copy
 from halow.helpers import get_observable_cells, normalize_pos, interpolate_path, astar_search, get_animation_frames, generate_map
 from halow.frontiers import top_k_frontiers, pack_frontiers
+from halow.constants import NUM_FRONTIERS
 from collections import deque
 import matplotlib.pyplot as plt
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
@@ -57,7 +58,6 @@ class CustomEnvironment(ParallelEnv):
         )
         
         self.current_drone_pos = self.drone.start_pos
-        
         self.drone.update_internal_belief_state(self.current_drone_pos, self.ground_truth)
         self._update_shared_belief(self.drone, self.current_drone_pos)
 
@@ -72,9 +72,27 @@ class CustomEnvironment(ParallelEnv):
         )
         
         self.current_rover_pos = self.rover.start_pos
-        
         self.rover.update_internal_belief_state(self.current_rover_pos, self.ground_truth)
         self._update_shared_belief(self.rover, self.current_rover_pos)
+        
+        drone_k_frontiers = top_k_frontiers(
+            self.shared_belief_map,
+            self.drone.detect_frontiers(),
+            self.current_drone_pos,
+            self.drone.radius,
+        )
+    
+        reachable_rover_frontiers = self._get_reachable_frontiers(self.rover.detect_frontiers(), self.current_rover_pos)
+        reachable_frontiers = [f for f, _ in reachable_rover_frontiers ]
+        rover_k_frontiers = top_k_frontiers(
+            self.shared_belief_map,
+            reachable_frontiers,
+            self.current_rover_pos,
+            self.rover.radius
+        )
+
+        drone_action_mask = self._get_action_mask(drone_k_frontiers)
+        rover_action_mask = self._get_action_mask(rover_k_frontiers)
         
         self.drone_frontier_target = None
         self.rover_frontier_target = None
@@ -85,6 +103,8 @@ class CustomEnvironment(ParallelEnv):
         self._step_count = 0
         
         infos = {a: {} for a in self.agents}
+        infos["drone"]["action_mask"] = drone_action_mask
+        infos["rover"]["action_mask"] = rover_action_mask
         
         observations = self._get_observations()
         
@@ -124,11 +144,18 @@ class CustomEnvironment(ParallelEnv):
         )
         self.rover_cached_path = {f: path for f, path in reachable_rover_frontiers}
         
+        # define action_mask to determine valid actions for this step 
+        drone_action_mask = self._get_action_mask(drone_k_frontiers)
+        rover_action_mask = self._get_action_mask(rover_k_frontiers) 
+        
+        infos["drone"]["action_mask"] = drone_action_mask
+        infos["rover"]["action_mask"] = rover_action_mask
+        
         drone_current_target  = self._map_action_to_frontier(drone_action, drone_k_frontiers)
         drone_penalty = self._compute_action_penalty(action=drone_action, scored_frontiers=drone_k_frontiers)
-        
         rover_current_target = self._map_action_to_frontier(rover_action, rover_k_frontiers)
         rover_penalty = self._compute_action_penalty(action=rover_action, scored_frontiers=rover_k_frontiers)
+        
         
         drone_target_changed = drone_current_target is not None and (drone_current_target != self.drone_frontier_target or len(self.drone_path) == 0)
         rover_target_changed = rover_current_target is not None and (rover_current_target != self.rover_frontier_target or len(self.rover_path) == 0)
@@ -400,3 +427,11 @@ class CustomEnvironment(ParallelEnv):
                 reachable.append((frontier, path))
         
         return reachable
+
+    def _get_action_mask(self, actions):
+        k = NUM_FRONTIERS
+        mask = np.zeros((k+1), dtype=np.float32)
+        for i in range(min(k, len(actions))):
+            mask[i] = 1.0
+        mask[k] = 1.0
+        return mask

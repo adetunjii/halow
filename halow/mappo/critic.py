@@ -12,5 +12,9 @@ class Critic(nn.Module):
             self.layers.append(
                 nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU())
             )
-        
         self.layers.append(nn.Linear(hidden_dim, 1))
+    
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
