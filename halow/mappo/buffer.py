@@ -59,7 +59,7 @@ class RolloutBuffer:
         observations = torch.zeros((total_obs_collected, self.num_agents, self.observation_space), dtype=torch.float32).to(self.device)
         action_masks = torch.zeros((total_obs_collected, self.num_agents, self.action_space)).bool().to(self.device)
         actions = torch.zeros((total_obs_collected, self.num_agents)).int().to(self.device)
-        rewards = torch.zeros(total_obs_collected, dtype=torch.float32).to(self.device)
+        rewards_to_go = torch.zeros(total_obs_collected, dtype=torch.float32).to(self.device)
         advantages = torch.zeros(total_obs_collected, dtype=torch.float32).to(self.device)
         
         idx = 0
@@ -68,8 +68,8 @@ class RolloutBuffer:
             observations[idx : idx+length] = torch.flatten(episode["obs"], 0, 1)
             action_masks[idx : idx+length] = torch.flatten(episode["action_masks"], 0, 1) # actions that can be taken
             actions[idx : idx + length] = episode["actions"] # actions the network output
-            rewards[idx : idx + length] = episode["rewards"]
-            rewards = (rewards - rewards.mean()) / rewards.std() + 1e-9
+            rewards_to_go[idx : idx + length] = episode["rewards"]
+            rewards_to_go = (rewards_to_go - rewards_to_go.mean()) / rewards_to_go.std() + 1e-9
             advantages[idx : idx + length] = episode["advantages"]
             advantages = (advantages - advantages.mean()) / advantages.std() + 1e-9
             
@@ -81,6 +81,6 @@ class RolloutBuffer:
             observations.flatten(0, 1),
             action_masks.flatten(0, 1),
             actions.flatten(0, 1),
-            rewards,
+            rewards_to_go,
             advantages,
         )
