@@ -28,7 +28,7 @@ def pack_frontiers(frontiers):
     best_scores = frontiers[0][1] if frontiers else 1.0
     best_score = max(best_scores, 1e-6)
     
-    packed = []    
+    packed = []
     for i in range(k):
         if i < len(frontiers):
             frontier_pos, score = frontiers[i]

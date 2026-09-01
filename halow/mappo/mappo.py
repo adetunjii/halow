@@ -13,13 +13,13 @@ class Mappo:
         
         obs_space = self.env.observation_space("drone")
         action_space = self.env.action_space("drone")
-        global_state_space = self.env.global_state_space()
         assert type(obs_space) == Box
         assert type(action_space) == Discrete
+        assert self.env.global_state is not None
    
         self.obs_dim = obs_space.shape[0]        
         self.action_dim = int(action_space.n)
-        self.global_state_dim = global_state_space.shape[0]
+        self.global_state_dim = self.env.global_state.shape[0]
         
         self.num_agents = 2
         self._init_hyperparameters()

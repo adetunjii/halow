@@ -15,5 +15,5 @@ include-package-data = true
 packages = [
     'halow',
     'halow.mappo',
-    'halow.assets',
+    'halow.assets'
 ]

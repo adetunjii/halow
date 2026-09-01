@@ -35,6 +35,7 @@ class CustomEnvironment(ParallelEnv):
         self.rover_frontier_target = None
         self.drone_path, self.rover_path = None, None
         self.fig, self.ax_mapped, self.ax_ground_truth = None, None, None
+        self.global_state = None
         self.possible_agents = ["drone", "rover"]
     
     def reset(self, seed=None, options=None):
@@ -101,6 +102,8 @@ class CustomEnvironment(ParallelEnv):
         infos["rover"]["action_mask"] = rover_action_mask
         
         observations = self._get_observations()
+        self.global_state = self._global_state(observations)
+        
         return observations, infos
     
     def step(self, actions):
@@ -193,7 +196,6 @@ class CustomEnvironment(ParallelEnv):
             next_rover_row, next_rover_col = int(round(next_rover_pos[0])), int(round(next_rover_pos[1]))  
             
             self.current_rover_pos = (next_rover_row, next_rover_col)
-            
             self.rover.update_internal_belief_state(self.current_rover_pos, self.ground_truth)
             self._update_shared_belief(self.rover, self.current_rover_pos)
             self.rover.battery_level = max(0.0, self.rover.battery_level - BATTERY_DEPLETION_RATE_PER_STEP)
@@ -300,14 +302,9 @@ class CustomEnvironment(ParallelEnv):
     def action_space(self, agent: Any): # type: ignore
         return Discrete(NUM_FRONTIERS + 1)
     
-    def global_state_space(self):
+    def _global_state(self, observation: dict):
         assert self.cell_confidence is not None
-        
-        observations = self._get_observations()
-        global_state = np.array([])
-        for _, val in observations.items():
-            global_state = np.concatenate([global_state, val])
-        return np.concatenate([global_state, self.ground_truth.flatten(), self.cell_confidence.flatten()])
+        return np.concatenate([list(observation.values()), self.ground_truth.flatten(), self.cell_confidence.flatten()]).astype(np.float32)
 
     def _get_observations(self):
         assert self.drone is not None

@@ -31,22 +31,22 @@ class RolloutBuffer:
 
     @staticmethod
     def rollout_to_tensor(episode: dict[str, Any]):
+        eps = dict({})
         for key, _ in episode.items():
-            episode[key] = torch.from_numpy(np.stack(episode[key]))
-        return episode
+            eps[key] = torch.from_numpy(np.stack(episode[key]))
+        return eps
     
     def compute_advantages(self, episode):
-        rewards_to_go = advantages = torch.zeros_like(episode["rewards"], dtype=torch.float32)
+        returns = advantages = torch.zeros_like(episode["rewards"], dtype=torch.float32)
         N = episode["observations"].size(0)
         
-        future_reward = 0 if episode["terminated"][-1] else episode["values"][-1]
+        lambda_return = torch.zeros(self.num_agents, dtype=torch.float32) if episode["terminated"][-1] else episode["values"][-1]
         for t in reversed(range(N)):
-            next_val = 0 if t == N-1 else episode["values"][t+1]
-            lambda_return = episode["rewards"][t] + self.gamma * (self.td_lambda * future_reward + (1 - self.td_lambda) * next_val)
-            rewards_to_go[t] = future_reward = lambda_return
-
+            next_val = torch.zeros(self.num_agents, dtype=torch.float32) if t == N-1 else episode["values"][t+1]
+            lambda_return = episode["rewards"][t] + self.gamma * (self.td_lambda * lambda_return + (1 - self.td_lambda) * next_val)
+            returns[t] = lambda_return
             advantages[t] = lambda_return - episode["values"][t]
-        episode["rewards_to_go"] = rewards_to_go
+        episode["returns"] = returns
         episode["advantages"] = advantages
         
         del episode["rewards"]
@@ -62,8 +62,8 @@ class RolloutBuffer:
         observations = torch.zeros((total_obs_collected, self.num_agents, self.observation_space), dtype=torch.float32).to(self.device)
         action_masks = torch.zeros((total_obs_collected, self.num_agents, self.action_space)).bool().to(self.device)
         actions = torch.zeros((total_obs_collected, self.num_agents)).int().to(self.device)
-        rewards_to_go = torch.zeros(total_obs_collected, dtype=torch.float32).to(self.device)
-        advantages = torch.zeros(total_obs_collected, dtype=torch.float32).to(self.device)
+        returns = torch.zeros(total_obs_collected, self.num_agents, dtype=torch.float32).to(self.device)
+        advantages = torch.zeros(total_obs_collected, self.num_agents, dtype=torch.float32).to(self.device)
         global_states = torch.zeros(total_obs_collected, self.global_state_space, dtype=torch.float32).to(self.device)
         
         idx = 0
@@ -72,14 +72,14 @@ class RolloutBuffer:
             observations[idx : idx+length] = episode["observations"]
             action_masks[idx : idx+length] = episode["action_masks"] # actions that can be taken
             actions[idx : idx + length] = episode["actions"] # actions the network output
-            rewards_to_go[idx : idx + length] = episode["rewards_to_go"]
+            returns[idx : idx + length] = episode["returns"]
             advantages[idx : idx + length] = episode["advantages"]
             global_states[idx: idx + length] = episode["global_state"]
             
             idx += length
         
-        rewards_to_go = (rewards_to_go - rewards_to_go.mean()) / rewards_to_go.std() + 1e-9
-        advantages = (advantages - advantages.mean()) / advantages.std() + 1e-9
+        returns = (returns - returns.mean()) / (returns.std() + 1e-9)
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-9)
         self.episodes = [None] * self.num_episodes
         self.episode_idx = 0
         
@@ -87,7 +87,7 @@ class RolloutBuffer:
             observations.flatten(0, 1),
             action_masks.flatten(0, 1),
             actions.flatten(0, 1),
-            rewards_to_go,
-            advantages,
+            returns.flatten(0, 1),
+            advantages.flatten(0, 1),
             global_states
         )
