@@ -25,6 +25,7 @@ class RolloutBuffer:
     def add(self, episode) -> None:
         self.compute_advantages(episode)
         self.episodes[self.episode_idx] = episode
+        self.episode_idx += 1
 
     @staticmethod
     def rollout_to_tensor(episode: dict[str, Any]):
