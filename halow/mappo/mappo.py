@@ -13,11 +13,13 @@ class Mappo:
         
         obs_space = self.env.observation_space("drone")
         action_space = self.env.action_space("drone")
+        global_state_space = self.env.global_state_space()
         assert type(obs_space) == Box
         assert type(action_space) == Discrete
    
         self.obs_dim = obs_space.shape[0]        
         self.action_dim = int(action_space.n)
+        self.global_state_dim = global_state_space.shape[0]
         
         self.num_agents = 2
         self._init_hyperparameters()
@@ -29,8 +31,6 @@ class Mappo:
         self.drone_actor_optim = Adam(self.drone_actor.parameters(), lr=self.learning_rate_actor)
         self.rover_actor_optim = Adam(self.rover_actor.parameters(), lr=self.learning_rate_actor)
         self.critic_optim = Adam(self.critic.parameters(), lr=self.learning_rate_critic)
-        
-        
         
     def _init_hyperparameters(self):
         self.gamma = 0.95
@@ -52,7 +52,8 @@ class Mappo:
             td_lambda = self.td_lambda,
             gamma=self.gamma,
             observation_space=self.obs_dim,
-            action_space=self.action_dim
+            action_space=self.action_dim,
+            global_state_space=self.global_state_dim
         )
 
         step = 0
@@ -67,8 +68,8 @@ class Mappo:
                     "rewards": [],
                     "advantages": [],
                     "values": [],
+                    "global_state": []
                 }
                 
-                num_episode += 1
-            
+                num_episode += 1 
             step += 1

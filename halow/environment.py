@@ -24,29 +24,22 @@ class CustomEnvironment(ParallelEnv):
     def __init__(self):
         self.height = HEIGHT
         self.width = WIDTH
-        
         self.ground_truth = generate_map(self.height, self.width, seed=42)
-        
         self.cell_confidence = None
         self.shared_belief_map = None
         self.drone = None
         self.rover = None
-        
         self.current_drone_pos = None
         self.current_rover_pos = None
-        
         self.drone_frontier_target = None
         self.rover_frontier_target = None
-        
         self.drone_path, self.rover_path = None, None
         self.fig, self.ax_mapped, self.ax_ground_truth = None, None, None
-        
         self.possible_agents = ["drone", "rover"]
     
     def reset(self, seed=None, options=None):
         self.agents = copy(self.possible_agents)
         self.shared_belief_map = np.full((self.height, self.width), 0.5, dtype=np.float32)
-
         self.cell_confidence = np.zeros((self.height, self.width), dtype=np.float32)
         
         self.drone = Agent(
@@ -103,13 +96,11 @@ class CustomEnvironment(ParallelEnv):
         self.rover_path = deque([])
         
         self._step_count = 0
-        
         infos = {a: {} for a in self.agents}
         infos["drone"]["action_mask"] = drone_action_mask
         infos["rover"]["action_mask"] = rover_action_mask
         
         observations = self._get_observations()
-        
         return observations, infos
     
     def step(self, actions):
@@ -158,7 +149,6 @@ class CustomEnvironment(ParallelEnv):
         rover_current_target = self._map_action_to_frontier(rover_action, rover_k_frontiers)
         rover_penalty = self._compute_action_penalty(action=rover_action, scored_frontiers=rover_k_frontiers)
         
-        
         drone_target_changed = drone_current_target is not None and (drone_current_target != self.drone_frontier_target or len(self.drone_path) == 0)
         rover_target_changed = rover_current_target is not None and (rover_current_target != self.rover_frontier_target or len(self.rover_path) == 0)
         
@@ -192,7 +182,6 @@ class CustomEnvironment(ParallelEnv):
             
             next_drone_pos = self.drone_path.popleft()
             next_drone_row, next_drone_col = int(round(next_drone_pos[0])), int(round(next_drone_pos[1]))
-            
             self.current_drone_pos = (next_drone_row, next_drone_col)
             
             self.drone.update_internal_belief_state(self.current_drone_pos, self.ground_truth)
@@ -211,22 +200,18 @@ class CustomEnvironment(ParallelEnv):
         
         # compute rewards per step
         num_resolved_after = self._count_resolved_cells()
-        
         new_info_gained = num_resolved_after - num_resolved_before
         norm_info_gained = new_info_gained / (self.height * self.width)
         
         joint_reward = norm_info_gained
-        
         rewards["drone"] = joint_reward - (ALPHA * drone_penalty)
         rewards["rover"] = joint_reward - (ALPHA * rover_penalty)
-                
-        self._step_count += 1
-        
+                    
         coverage = num_resolved_after / (self.height * self.width)
-        
         if coverage >= COVERAGE_TARGET:
             terminated = {a: True for a in self.agents}
         
+        self._step_count += 1
         if self._step_count >= MAX_STEPS_PER_EPISODE:
             truncated = {a: True for a in self.agents}
             
@@ -255,7 +240,6 @@ class CustomEnvironment(ParallelEnv):
             
             self.ax_ground_truth.set_title("Ground Truth")
             self.ax_ground_truth.imshow(self.ground_truth, cmap="terrain", vmin=0, vmax=2, interpolation='bicubic')
-            
             self.mapped_img = self.ax_mapped.imshow(self.shared_belief_map, cmap="Greys", vmin=0, vmax=1)
             
             for ax in (self.ax_ground_truth, self.ax_mapped):
@@ -266,12 +250,11 @@ class CustomEnvironment(ParallelEnv):
             
             self.drone_animation_frames = get_animation_frames(os.path.join(root, "./assets/drone.gif"))
             self.rover_animation_frames = get_animation_frames(os.path.join(root, "./assets/rover.gif"))
-            
+
             assert self.drone_animation_frames is not None, f"Drone animation frames failed to load"
             assert self.rover_animation_frames is not None, f"Rover animation frames failed to load"
             
             self.frame_idx = 0
-            
             drone_start_row, drone_start_col = self.drone.start_pos
             self.drone_img_box = OffsetImage(self.drone_animation_frames[0], zoom=0.35)
             self.drone_annotation = AnnotationBbox(self.drone_img_box, (drone_start_col, drone_start_row), frameon=False)
@@ -286,7 +269,6 @@ class CustomEnvironment(ParallelEnv):
             plt.tight_layout()
         
         self.mapped_img.set_data(self.shared_belief_map)
-        
         assert self.current_drone_pos is not None, f"Cannot plot drone, current_drone_pos is None"
         assert self.current_rover_pos is not None, f"Cannot plot rover, current_rover_pos is None"
         assert self.drone_animation_frames is not None and self.rover_animation_frames is not None
@@ -300,16 +282,14 @@ class CustomEnvironment(ParallelEnv):
         self.rover_annotation.xy = (rover_col, rover_row)
         self.rover_annotation.xybox = (rover_col, rover_row)
         self.rover_img_box.set_data(self.rover_animation_frames[self.frame_idx % len(self.rover_animation_frames)])
-        
         self.frame_idx += 1
         
         coverage = self._count_resolved_cells() / (self.height * self.width)
-        
         # TODO: plot coverage, step, battery level
-
+        
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
-        plt.pause(0.01)
+        plt.pause(0.001)
     
     @functools.cache
     def observation_space(self, agent: Any) -> Space: # type: ignore
@@ -319,6 +299,15 @@ class CustomEnvironment(ParallelEnv):
     @functools.cache
     def action_space(self, agent: Any): # type: ignore
         return Discrete(NUM_FRONTIERS + 1)
+    
+    def global_state_space(self):
+        assert self.cell_confidence is not None
+        
+        observations = self._get_observations()
+        global_state = np.array([])
+        for _, val in observations.items():
+            global_state = np.concatenate([global_state, val])
+        return np.concatenate([global_state, self.ground_truth.flatten(), self.cell_confidence.flatten()])
 
     def _get_observations(self):
         assert self.drone is not None
@@ -331,7 +320,6 @@ class CustomEnvironment(ParallelEnv):
         packed_drone_frontiers = pack_frontiers(
             top_k_frontiers(self.shared_belief_map, drone_frontiers, self.current_drone_pos, self.drone.radius),
         )
-        
         drone_observation = np.concatenate([
             self.drone.belief_state.flatten(),
             normalize_pos(self.current_drone_pos),
@@ -344,7 +332,6 @@ class CustomEnvironment(ParallelEnv):
         packed_rover_frontiers = pack_frontiers(
             top_k_frontiers(self.shared_belief_map, rover_frontiers, self.current_rover_pos, self.rover.radius),
         )
-        
         rover_observation = np.concatenate([
             self.shared_belief_map.flatten(),
             normalize_pos(self.current_rover_pos),
@@ -356,25 +343,22 @@ class CustomEnvironment(ParallelEnv):
         observations = {
             'drone': drone_observation,
             'rover': rover_observation
-        }        
-
+        }
         return observations
         
     def _map_action_to_frontier(self, action: int, scored_frontiers: list[tuple[int, int]]):
         k = NUM_FRONTIERS
         if action == k: return None
-        
         if not scored_frontiers: return None
         
         idx = min(action, len(scored_frontiers)-1)
         frontier, _ = scored_frontiers[idx]
-        
         return frontier
     
     def _compute_action_penalty(self, action, scored_frontiers) -> float:
         """Computes the penalty for selecting a suboptimal frontier, normalized to range [0, 1]"""
-        k = NUM_FRONTIERS
-            
+        
+        k = NUM_FRONTIERS                    
         if action == k or len(scored_frontiers) <= 1: return 0.0
 
         _, best_score = scored_frontiers[0]
@@ -382,8 +366,7 @@ class CustomEnvironment(ParallelEnv):
             return 0.0
         
         idx = min(action, len(scored_frontiers)-1)
-        _, chosen_score = scored_frontiers[idx]
-        
+        _, chosen_score = scored_frontiers[idx] 
         return max(0.0, best_score - chosen_score) / best_score
         
     def _update_shared_belief(self, agent: Agent, current_pos: tuple[int, int]):

@@ -6,7 +6,8 @@ class RolloutBuffer:
     def __init__(
         self,
         action_space,
-        observation_space, 
+        observation_space,
+        global_state_space,
         gamma,
         td_lambda,
         num_episodes,
@@ -14,6 +15,7 @@ class RolloutBuffer:
     ):
         self.action_space = action_space
         self.observation_space = observation_space
+        self.global_state_space = global_state_space
         self.gamma = gamma
         self.num_episodes = num_episodes
         self.episodes = [None] * self.num_episodes
@@ -29,8 +31,8 @@ class RolloutBuffer:
 
     @staticmethod
     def rollout_to_tensor(episode: dict[str, Any]):
-        for key, val in episode.items():
-            episode[key] = torch.from_numpy(np.stack(episode[val]))
+        for key, _ in episode.items():
+            episode[key] = torch.from_numpy(np.stack(episode[key]))
         return episode
     
     def compute_advantages(self, episode):
@@ -62,21 +64,24 @@ class RolloutBuffer:
         actions = torch.zeros((total_obs_collected, self.num_agents)).int().to(self.device)
         rewards_to_go = torch.zeros(total_obs_collected, dtype=torch.float32).to(self.device)
         advantages = torch.zeros(total_obs_collected, dtype=torch.float32).to(self.device)
+        global_states = torch.zeros(total_obs_collected, self.global_state_space, dtype=torch.float32).to(self.device)
         
         idx = 0
         for episode, length in zip(self.episodes, length_per_episode):
             assert episode is not None
-            observations[idx : idx+length] = torch.flatten(episode["observations"], 0, 1)
-            action_masks[idx : idx+length] = torch.flatten(episode["action_masks"], 0, 1) # actions that can be taken
+            observations[idx : idx+length] = episode["observations"]
+            action_masks[idx : idx+length] = episode["action_masks"] # actions that can be taken
             actions[idx : idx + length] = episode["actions"] # actions the network output
-            rewards_to_go[idx : idx + length] = episode["rewards"]
-            rewards_to_go = (rewards_to_go - rewards_to_go.mean()) / rewards_to_go.std() + 1e-9
+            rewards_to_go[idx : idx + length] = episode["rewards_to_go"]
             advantages[idx : idx + length] = episode["advantages"]
-            advantages = (advantages - advantages.mean()) / advantages.std() + 1e-9
+            global_states[idx: idx + length] = episode["global_state"]
             
             idx += length
         
+        rewards_to_go = (rewards_to_go - rewards_to_go.mean()) / rewards_to_go.std() + 1e-9
+        advantages = (advantages - advantages.mean()) / advantages.std() + 1e-9
         self.episodes = [None] * self.num_episodes
+        self.episode_idx = 0
         
         return (
             observations.flatten(0, 1),
@@ -84,4 +89,5 @@ class RolloutBuffer:
             actions.flatten(0, 1),
             rewards_to_go,
             advantages,
+            global_states
         )
