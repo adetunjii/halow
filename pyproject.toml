@@ -1,0 +1,19 @@
+[project]
+name = "halow"
+description = "Heterogeneous Agent for Learning Open-World exploration"
+version = "0.0.1"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+include-package-data = true
+packages = [
+    'halow',
+    'halow.mappo',
+    'halow.assets',
+]

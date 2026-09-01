@@ -3,7 +3,7 @@ from torch.nn import functional
 from torch.distributions import Categorical
 
 class Actor(nn.Module):
-    def __init__(self, input_dim: int, otuput_dim: int, hidden_dim: int, num_layers: int):
+    def __init__(self, input_dim: int, output_dim: int, hidden_dim: int, num_layers: int):
         super().__init__()
         
         self.layers = nn.ModuleList()
@@ -11,7 +11,7 @@ class Actor(nn.Module):
         
         for _ in range(num_layers):
             self.layers.append(nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU()))
-        self.layers.append(nn.Linear(hidden_dim, otuput_dim))
+        self.layers.append(nn.Linear(hidden_dim, output_dim))
     
     def act(self, x, action_mask=None):
         logits = self.logits(x, action_mask)

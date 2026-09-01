@@ -1,18 +1,20 @@
+import os
 from typing import Any
 from gymnasium.spaces import Discrete, Box
 from gymnasium.spaces.space import Space
 from pettingzoo import ParallelEnv
 import numpy as np
-from agent import Agent, ConfidenceLevels, UpdateLimit
-import constants
+from halow.agent import Agent, ConfidenceLevels, UpdateLimit
 from copy import copy
 from halow.helpers import get_observable_cells, normalize_pos, interpolate_path, astar_search, get_animation_frames, generate_map
 from halow.frontiers import top_k_frontiers, pack_frontiers
-from halow.constants import NUM_FRONTIERS
+from halow.constants import *
 from collections import deque
 import matplotlib.pyplot as plt
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 import functools
+
+root = os.path.dirname(__file__)
 
 class CustomEnvironment(ParallelEnv):
     metadata = {
@@ -20,8 +22,8 @@ class CustomEnvironment(ParallelEnv):
     }
     
     def __init__(self):
-        self.height = constants.HEIGHT
-        self.width = constants.WIDTH
+        self.height = HEIGHT
+        self.width = WIDTH
         
         self.ground_truth = generate_map(self.height, self.width, seed=42)
         
@@ -184,7 +186,7 @@ class CustomEnvironment(ParallelEnv):
         num_resolved_before = self._count_resolved_cells() 
         
         # drone acts as a scout, therefore takes more steps than the rover
-        for _ in range(constants.DRONE_STEPS):
+        for _ in range(DRONE_STEPS):
             if not self.drone_path:
                 break
             
@@ -195,7 +197,7 @@ class CustomEnvironment(ParallelEnv):
             
             self.drone.update_internal_belief_state(self.current_drone_pos, self.ground_truth)
             self._update_shared_belief(self.drone, self.current_drone_pos)
-            self.drone.battery_level = max(0.0, self.drone.battery_level - constants.BATTERY_DEPLETION_RATE_PER_STEP)
+            self.drone.battery_level = max(0.0, self.drone.battery_level - BATTERY_DEPLETION_RATE_PER_STEP)
             
         if self.rover_path:
             next_rover_pos = self.rover_path.popleft()
@@ -205,7 +207,7 @@ class CustomEnvironment(ParallelEnv):
             
             self.rover.update_internal_belief_state(self.current_rover_pos, self.ground_truth)
             self._update_shared_belief(self.rover, self.current_rover_pos)
-            self.rover.battery_level = max(0.0, self.rover.battery_level - constants.BATTERY_DEPLETION_RATE_PER_STEP)
+            self.rover.battery_level = max(0.0, self.rover.battery_level - BATTERY_DEPLETION_RATE_PER_STEP)
         
         # compute rewards per step
         num_resolved_after = self._count_resolved_cells()
@@ -215,17 +217,17 @@ class CustomEnvironment(ParallelEnv):
         
         joint_reward = norm_info_gained
         
-        rewards["drone"] = joint_reward - (constants.ALPHA * drone_penalty)
-        rewards["rover"] = joint_reward - (constants.ALPHA * rover_penalty)
+        rewards["drone"] = joint_reward - (ALPHA * drone_penalty)
+        rewards["rover"] = joint_reward - (ALPHA * rover_penalty)
                 
         self._step_count += 1
         
         coverage = num_resolved_after / (self.height * self.width)
         
-        if coverage >= constants.COVERAGE_TARGET:
+        if coverage >= COVERAGE_TARGET:
             terminated = {a: True for a in self.agents}
         
-        if self._step_count >= constants.MAX_STEPS_PER_EPISODE:
+        if self._step_count >= MAX_STEPS_PER_EPISODE:
             truncated = {a: True for a in self.agents}
             
         if self.drone.battery_level <= 0:
@@ -262,8 +264,8 @@ class CustomEnvironment(ParallelEnv):
                 ax.invert_yaxis()
                 ax.xaxis.tick_top()
             
-            self.drone_animation_frames = get_animation_frames("../assets/drone.gif")
-            self.rover_animation_frames = get_animation_frames("../assets/rover.gif")
+            self.drone_animation_frames = get_animation_frames(os.path.join(root, "./assets/drone.gif"))
+            self.rover_animation_frames = get_animation_frames(os.path.join(root, "./assets/rover.gif"))
             
             assert self.drone_animation_frames is not None, f"Drone animation frames failed to load"
             assert self.rover_animation_frames is not None, f"Rover animation frames failed to load"
@@ -311,12 +313,12 @@ class CustomEnvironment(ParallelEnv):
     
     @functools.cache
     def observation_space(self, agent: Any) -> Space: # type: ignore
-        obs_size = (self.height * self.width) + 4 + (constants.NUM_FRONTIERS * 3) + 1
+        obs_size = (self.height * self.width) + 4 + (NUM_FRONTIERS * 3) + 1
         return Box(low=-1.0, high=1.0, shape=(obs_size,), dtype=np.float32)
     
     @functools.cache
-    def action_space(self, agent: Any) -> Space: # type: ignore
-        return Discrete(constants.NUM_FRONTIERS + 1)
+    def action_space(self, agent: Any): # type: ignore
+        return Discrete(NUM_FRONTIERS + 1)
 
     def _get_observations(self):
         assert self.drone is not None
@@ -359,7 +361,7 @@ class CustomEnvironment(ParallelEnv):
         return observations
         
     def _map_action_to_frontier(self, action: int, scored_frontiers: list[tuple[int, int]]):
-        k = constants.NUM_FRONTIERS
+        k = NUM_FRONTIERS
         if action == k: return None
         
         if not scored_frontiers: return None
@@ -371,7 +373,7 @@ class CustomEnvironment(ParallelEnv):
     
     def _compute_action_penalty(self, action, scored_frontiers) -> float:
         """Computes the penalty for selecting a suboptimal frontier, normalized to range [0, 1]"""
-        k = constants.NUM_FRONTIERS
+        k = NUM_FRONTIERS
             
         if action == k or len(scored_frontiers) <= 1: return 0.0
 
@@ -390,14 +392,14 @@ class CustomEnvironment(ParallelEnv):
         for r, c in observable_cells:
             sensor_reading = agent.get_sensor_reading((r, c), self.ground_truth)
             
-            if sensor_reading == constants.OCCUPIED:
+            if sensor_reading == OCCUPIED:
                 max_cell_accuracy = agent.confidence.occupied
                 log_reading = np.log(agent.confidence.occupied / (1.0 - agent.confidence.occupied))
             else:
                 max_cell_accuracy = agent.confidence.free
                 log_reading = np.log((1.0 - agent.confidence.free) / agent.confidence.free)
             
-            noisy_log_reading = np.random.normal(loc=log_reading, scale=constants.COMMUNICATION_NOISE_SCALE)
+            noisy_log_reading = np.random.normal(loc=log_reading, scale=COMMUNICATION_NOISE_SCALE)
             clipped_log_reading = np.clip(noisy_log_reading, agent.belief_update_limit.min, agent.belief_update_limit.max)
             
             assert self.cell_confidence is not None
@@ -415,7 +417,7 @@ class CustomEnvironment(ParallelEnv):
     def _count_resolved_cells(self):
         """Counts the number of cells in the shared belief map that have a known status"""
         assert self.shared_belief_map is not None
-        return int(np.sum((self.shared_belief_map < constants.FREE_THRESHOLD) | (self.shared_belief_map > constants.OBSTACLE_THRESHOLD)))
+        return int(np.sum((self.shared_belief_map < FREE_THRESHOLD) | (self.shared_belief_map > OBSTACLE_THRESHOLD)))
     
     def _get_reachable_frontiers(self, frontiers, current_pos):
         assert self.shared_belief_map is not None

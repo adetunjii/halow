@@ -9,14 +9,14 @@ class RolloutBuffer:
         observation_space, 
         gamma,
         td_lambda,
-        total_num_episodes,
+        num_episodes,
         num_agents=2,
     ):
         self.action_space = action_space
         self.observation_space = observation_space
         self.gamma = gamma
-        self.total_num_episodes = total_num_episodes
-        self.episodes = [None] * self.total_num_episodes
+        self.num_episodes = num_episodes
+        self.episodes = [None] * self.num_episodes
         self.episode_idx = 0
         self.device = "mps" if torch.backends.mps.is_available() else "cpu"
         self.num_agents = num_agents
@@ -35,7 +35,7 @@ class RolloutBuffer:
     
     def compute_advantages(self, episode):
         rewards_to_go = advantages = torch.zeros_like(episode["rewards"], dtype=torch.float32)
-        N = episode["obs"].size(0)
+        N = episode["observations"].size(0)
         
         future_reward = 0 if episode["terminated"][-1] else episode["values"][-1]
         for t in reversed(range(N)):
@@ -66,7 +66,7 @@ class RolloutBuffer:
         idx = 0
         for episode, length in zip(self.episodes, length_per_episode):
             assert episode is not None
-            observations[idx : idx+length] = torch.flatten(episode["obs"], 0, 1)
+            observations[idx : idx+length] = torch.flatten(episode["observations"], 0, 1)
             action_masks[idx : idx+length] = torch.flatten(episode["action_masks"], 0, 1) # actions that can be taken
             actions[idx : idx + length] = episode["actions"] # actions the network output
             rewards_to_go[idx : idx + length] = episode["rewards"]
@@ -76,7 +76,7 @@ class RolloutBuffer:
             
             idx += length
         
-        self.episodes = [None] * self.total_num_episodes
+        self.episodes = [None] * self.num_episodes
         
         return (
             observations.flatten(0, 1),
