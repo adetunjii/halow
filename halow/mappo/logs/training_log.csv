@@ -1,0 +1,1 @@
+run,mean_return_drone,mean_return_rover,std_return_drone,std_return_rover,mean_ep_length,std_ep_length,critic_loss,drone_actor_loss,rover_actor_loss,drone_entropy,rover_entropy,drone_grad_norm,rover_grad_norm,critic_grad_norm

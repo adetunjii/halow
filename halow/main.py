@@ -17,4 +17,4 @@ if __name__ == "__main__":
 
     _, inf = customenv.reset()
     policy = Mappo(customenv)
-    policy.train()
+    policy.train(runs=20)

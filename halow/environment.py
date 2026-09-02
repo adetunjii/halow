@@ -24,7 +24,7 @@ class CustomEnvironment(ParallelEnv):
     def __init__(self):
         self.height = HEIGHT
         self.width = WIDTH
-        self.ground_truth = generate_map(self.height, self.width, seed=42)
+        self.ground_truth = None
         self.cell_confidence = None
         self.shared_belief_map = None
         self.drone = None
@@ -39,6 +39,7 @@ class CustomEnvironment(ParallelEnv):
         self.possible_agents = ["drone", "rover"]
     
     def reset(self, seed=None, options=None):
+        self.ground_truth = generate_map(self.height, self.width, seed=seed,)
         self.agents = copy(self.possible_agents)
         self.shared_belief_map = np.full((self.height, self.width), 0.5, dtype=np.float32)
         self.cell_confidence = np.zeros((self.height, self.width), dtype=np.float32)
@@ -308,6 +309,7 @@ class CustomEnvironment(ParallelEnv):
         assert self.current_drone_pos is not None
         assert self.current_rover_pos is not None
         assert self.drone is not None and self.rover is not None
+        assert self.ground_truth is not None
         
         return np.concatenate([np.stack(list(observation.values())).flatten(), 
                                self.ground_truth.flatten(), 
@@ -377,6 +379,7 @@ class CustomEnvironment(ParallelEnv):
         return max(0.0, best_score - chosen_score) / best_score
         
     def _update_shared_belief(self, agent: Agent, current_pos: tuple[int, int]):
+        assert self.ground_truth is not None
         observable_cells = get_observable_cells(agent.belief_state, current_pos, agent.radius)
         
         for r, c in observable_cells:

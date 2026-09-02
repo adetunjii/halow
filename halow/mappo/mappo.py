@@ -1,4 +1,5 @@
 import os
+import csv
 from halow.mappo.actor import Actor
 from halow.mappo.critic import Critic
 from halow.mappo.buffer import RolloutBuffer
@@ -54,7 +55,9 @@ class Mappo:
         self.max_grad_norm = 0.5
     
     def train(self, runs=10):
-        for _ in range(runs):
+        log_path = self.setup_logger()
+        
+        for run in range(runs):
             buf = RolloutBuffer(
                 num_agents=2,
                 num_episodes=self.num_episodes_per_batch,
@@ -66,6 +69,7 @@ class Mappo:
                 device= self.device
             )
             
+            collected_episodes = []
             num_episode = 0
             while num_episode < self.num_episodes_per_batch:
                 episode = {
@@ -78,8 +82,8 @@ class Mappo:
                     "global_state": [],
                     "final_value": [0.0] * self.num_agents
                 }
-                
-                obs, infos = self.env.reset()
+                seed = np.random.randint(0, 10000)
+                obs, infos = self.env.reset(seed=seed)
                 terminated, truncated = False, False
                 while not terminated and not truncated:
                     with torch.no_grad():
@@ -111,11 +115,22 @@ class Mappo:
                     global_state = torch.tensor(self.env.global_state, device=self.device, dtype=torch.float32)
                     final_value = self.critic(global_state)
                     episode["final_value"] = final_value.cpu().numpy()
+            
+                collected_episodes.append({
+                    "observations": episode["observations"],
+                    "rewards": episode["rewards"]
+                })
+            
                 print("Yes terminated")
                 buf.add(episode)
                 num_episode += 1
             
             (batch_obs, batch_action_masks, batch_actions, batch_log_probs, batch_returns, batch_adv, batch_global_states) = buf.batchify()
+            critic_losses = []
+            drone_actor_losses = []
+            rover_actor_losses = []
+            drone_entropies = []
+            rover_entropies = []
             
             for i in range(self.epochs):
                 self.drone_actor_optim.zero_grad()
@@ -128,6 +143,7 @@ class Mappo:
                     current_values = self.critic(batch_global_states[start:end])
                     critic_loss = torch.nn.functional.mse_loss(current_values, batch_returns[start:end], reduction="mean")
                     critic_loss.backward()
+                    critic_losses.append(critic_loss.item())
                 
                 # optimize the actor network            
                 for start in range(0, batch_obs.size(0), self.batch_size):
@@ -145,6 +161,8 @@ class Mappo:
                     drone_grad_loss = drone_grad_loss.mean()
                     drone_actor_loss = -drone_grad_loss - self.entropy_coefficient * drone_entropy_loss.mean() # drone_entropy_loss.mean() to get the average entropy loss for all timesteps in the batch
                     drone_actor_loss.backward()
+                    drone_actor_losses.append(drone_actor_loss.item())
+                    drone_entropies.append(drone_entropy_loss.mean().item())
                     
                     rover_obs = batch_obs[start:end, 1, :]
                     rover_actions = batch_actions[start:end, 1]
@@ -157,6 +175,9 @@ class Mappo:
                     rover_grad_loss = torch.min((rover_advantages * rover_ratio), (rover_advantages * torch.clamp(rover_ratio, 1 - self.clip_rate, 1 + self.clip_rate)))
                     rover_actor_loss = -rover_grad_loss.mean() - (self.entropy_coefficient * rover_entropy_loss.mean())
                     rover_actor_loss.backward()
+                    rover_actor_losses.append(rover_actor_loss.item())
+                    rover_entropies.append(rover_entropy_loss.mean().item())
+
                 
                 # gradient clipping
                 drone_grad_norm = torch.nn.utils.clip_grad_norm_(self.drone_actor.parameters(), max_norm=self.max_grad_norm)
@@ -166,9 +187,18 @@ class Mappo:
                 self.drone_actor_optim.step()
                 self.rover_actor_optim.step()
                 self.critic_optim.step()
-            self.save_policy()
+                
+                self.log_run(
+                    log_path, run,
+                    collected_episodes,
+                    critic_losses, drone_actor_losses, rover_actor_losses,
+                    drone_entropies, rover_entropies,
+                    drone_grad_norm.item(), rover_grad_norm.item(), critic_grad_norm.item()
+                )
+                self.save_policy(run)
+                
         
-    def save_policy(self):
+    def save_policy(self, run: int):
         checkpoint = {
             "drone_actor": self.drone_actor.state_dict(),
             "rover_actor": self.rover_actor.state_dict(),
@@ -177,4 +207,54 @@ class Mappo:
             "rover_optim": self.rover_actor_optim.state_dict(),
             "critic_optim": self.critic_optim.state_dict()
         }
+        torch.save(checkpoint, os.path.join(root, f"weights/checkpoint_run_{run}.pt"))
         torch.save(checkpoint, os.path.join(root, "weights/policy.pt"))
+        
+        
+    def setup_logger(self):
+        log_path = os.path.join(root, "logs/training_log.csv")
+        with open(log_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "run",
+                "mean_return_drone",
+                "mean_return_rover", 
+                "std_return_drone",
+                "std_return_rover",
+                "mean_ep_length",
+                "std_ep_length",
+                "critic_loss",
+                "drone_actor_loss",
+                "rover_actor_loss",
+                "drone_entropy",
+                "rover_entropy",
+                "drone_grad_norm",
+                "rover_grad_norm",
+                "critic_grad_norm"
+            ])
+        return log_path
+
+
+    def log_run(self, log_path, run, episodes, critic_losses, drone_actor_losses, rover_actor_losses, drone_entropies, rover_entropies, drone_grad_norm, rover_grad_norm, critic_grad_norm):
+        # episode-level stats — computed before batchify() clears the buffer
+        episode_returns_drone = [sum(r[0] for r in ep["rewards"]) for ep in episodes]
+        episode_returns_rover = [sum(r[1] for r in ep["rewards"]) for ep in episodes]
+        episode_lengths = [len(ep["observations"]) for ep in episodes]
+
+        row = [
+            run,
+            np.mean(episode_returns_drone),
+            np.mean(episode_returns_rover),
+            np.std(episode_returns_drone),
+            np.std(episode_returns_rover),
+            np.mean(episode_lengths),
+            np.std(episode_lengths),
+            np.mean(critic_losses),
+            np.mean(drone_actor_losses),
+            np.mean(rover_actor_losses),
+            np.mean(drone_entropies),
+            np.mean(rover_entropies),
+            drone_grad_norm,
+            rover_grad_norm,
+            critic_grad_norm
+        ]
