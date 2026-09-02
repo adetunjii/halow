@@ -19,7 +19,6 @@ if __name__ == "__main__":
     done = False
     
     for _ in range(1000):
-        # this is where you would insert your policy
         actions = {agent: env.action_space(agent).sample() for agent in env.agents}
 
         observations, rewards, terminations, truncations, infos = env.step(actions)

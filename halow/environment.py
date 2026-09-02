@@ -229,7 +229,7 @@ class CustomEnvironment(ParallelEnv):
 
         self.agents = active_agents
         observations = self._get_observations()
-        
+        self.global_state = self._global_state(observations) 
         return observations, rewards, terminated, truncated, infos    
     
     def render(self):
@@ -304,7 +304,17 @@ class CustomEnvironment(ParallelEnv):
     
     def _global_state(self, observation: dict):
         assert self.cell_confidence is not None
-        return np.concatenate([list(observation.values()), self.ground_truth.flatten(), self.cell_confidence.flatten()]).astype(np.float32)
+        assert self.current_drone_pos is not None
+        assert self.current_rover_pos is not None
+        assert self.drone is not None and self.rover is not None
+        
+        return np.concatenate([list(observation.values()), 
+                               self.ground_truth.flatten(), 
+                               normalize_pos(self.current_drone_pos), 
+                               normalize_pos(self.current_rover_pos), 
+                               [self.drone.battery_level, self.rover.battery_level], 
+                               self.cell_confidence.flatten()]
+                            ).astype(np.float32)
 
     def _get_observations(self):
         assert self.drone is not None
@@ -357,7 +367,6 @@ class CustomEnvironment(ParallelEnv):
         
         k = NUM_FRONTIERS                    
         if action == k or len(scored_frontiers) <= 1: return 0.0
-
         _, best_score = scored_frontiers[0]
         if best_score < 1e-6:
             return 0.0
