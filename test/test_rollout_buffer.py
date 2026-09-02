@@ -24,8 +24,8 @@ class TestRolloutBuffer(unittest.TestCase):
             td_lambda=self.td_lambda,
             num_episodes=self.num_episodes,
             num_agents=self.num_agents,
+            device="cpu"
         )
-        self.buffer.device = "cpu"
 
     def _mock_episode(self, length: int = 10):
         N = self.num_agents
@@ -37,11 +37,12 @@ class TestRolloutBuffer(unittest.TestCase):
             "observations": [np.random.randn(N, obs_dim).astype(np.float32) for _ in range(length)],
             "action_masks": [np.random.randint(0, 1, (N, action_dim)).astype(bool) for _ in range(length)],
             "actions": [np.random.randint(0, action_dim, (N,)).astype(np.int64) for _ in range(length)],
+            "log_probs": [np.random.randint(0, 1, (N, )).astype(np.float32) for _ in range(length)],
             "rewards": [np.random.randn(N,).astype(np.float32) for _ in range(length)],
-            "values": [np.random.randn(1,).astype(np.float32) for _ in range(length)],
+            "values": [np.random.randn(N,).astype(np.float32) for _ in range(length)],
             "global_state": [np.random.randn(state_dim,).astype(np.float32) for _ in range(length)],
             "terminated": [False] * (length - 1) + [True],
-            "final_value": [0.0]
+            "final_value": [0., 0.]
         }
 
     def test_rollout_to_tensor(self):
@@ -62,9 +63,9 @@ class TestRolloutBuffer(unittest.TestCase):
         episode = {
             "observations": torch.randn(T, self.num_agents, self.observation_space),
             "rewards": torch.ones(T, self.num_agents),
-            "values": torch.arange(T, dtype=torch.float32).unsqueeze(1).expand(-1, self.num_agents),
+            "values": torch.ones(T, self.num_agents, dtype=torch.float32),
             "terminated": [False, False, True],
-            "final_value": torch.tensor(0.0) 
+            "final_value": torch.tensor([0.0, 0.0])
         }
         last_reward = episode["rewards"][-1]
         self.buffer.compute_advantages(episode)
@@ -81,7 +82,7 @@ class TestRolloutBuffer(unittest.TestCase):
             "rewards": torch.ones(T, N) * 1.0,
             "values": torch.full((T, N), 5.0),
             "terminated": [False, False, False],
-            "final_value": torch.tensor(5.0)
+            "final_value": torch.tensor([5.0, 5.0])
         }
 
         last_reward = episode["rewards"][-1]
@@ -107,18 +108,18 @@ class TestRolloutBuffer(unittest.TestCase):
         mock_episode =  self._mock_episode(length=10)
         self.buffer.add(mock_episode)
 
-        obs, masks, actions, returns, advantages, states = self.buffer.batchify()
+        obs, masks, actions, log_probs, returns, advantages, states = self.buffer.batchify()
 
         T = 10
         obs_dim = self.observation_space
         act_dim = self.action_space
         state_dim = self.global_state_space
 
-        self.assertEqual(obs.shape, (T * self.num_agents, obs_dim))
-        self.assertEqual(masks.shape, (T * self.num_agents, act_dim))
-        self.assertEqual(actions.shape, (T * self.num_agents,))
-        self.assertEqual(returns.shape, (T * self.num_agents,))
-        self.assertEqual(advantages.shape, (T * self.num_agents,))
+        self.assertEqual(obs.shape, (T, self.num_agents, obs_dim))
+        self.assertEqual(masks.shape, (T, self.num_agents, act_dim))
+        self.assertEqual(actions.shape, (T,self.num_agents,))
+        self.assertEqual(returns.shape, (T, self.num_agents,))
+        self.assertEqual(advantages.shape, (T, self.num_agents,))
         self.assertEqual(states.shape, (T, state_dim))
 
     def test_batchify_multiple_episodes(self):
@@ -128,28 +129,28 @@ class TestRolloutBuffer(unittest.TestCase):
         self.buffer.add(dummy1)
         self.buffer.add(dummy2)
 
-        obs, masks, actions, returns, advantages, states = self.buffer.batchify()
+        obs, masks, actions, log_probs, returns, advantages, states = self.buffer.batchify()
 
-        self.assertEqual(obs.shape, (15 * self.num_agents, self.observation_space))
+        self.assertEqual(obs.shape, (15, self.num_agents, self.observation_space))
         self.assertEqual(states.shape, (15, self.global_state_space))
         self.assertEqual(self.buffer.episode_idx, 0)
         self.assertTrue(all(e is None for e in self.buffer.episodes))
 
     def test_batchify_empty_buffer(self):
-        obs, masks, actions, returns, advantages, states = self.buffer.batchify()
+        obs, masks, actions, log_probs, returns, advantages, states = self.buffer.batchify()
 
-        self.assertEqual(obs.shape, (0, self.observation_space))
-        self.assertEqual(masks.shape, (0, self.action_space))
-        self.assertEqual(actions.shape, (0,))
-        self.assertEqual(returns.shape, (0,))
-        self.assertEqual(advantages.shape, (0,))
+        self.assertEqual(obs.shape, (0, self.num_agents, self.observation_space))
+        self.assertEqual(masks.shape, (0, self.num_agents, self.action_space))
+        self.assertEqual(actions.shape, (0, self.num_agents))
+        self.assertEqual(returns.shape, (0, self.num_agents))
+        self.assertEqual(advantages.shape, (0, self.num_agents))
         self.assertEqual(states.shape, (0, self.global_state_space))
 
     def test_dtype_preservation(self):
         dummy = self._mock_episode(length=5)
         self.buffer.add(dummy)
 
-        obs, masks, actions, returns, advantages, states = self.buffer.batchify()
+        obs, masks, actions, log_probs,returns, advantages, states = self.buffer.batchify()
 
         self.assertEqual(actions.dtype, torch.int32)
         self.assertEqual(masks.dtype, torch.bool)

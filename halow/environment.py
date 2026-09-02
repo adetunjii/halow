@@ -211,6 +211,7 @@ class CustomEnvironment(ParallelEnv):
                     
         coverage = num_resolved_after / (self.height * self.width)
         if coverage >= COVERAGE_TARGET:
+            print(f"Terminating: coverage {coverage:.2f}%")
             terminated = {a: True for a in self.agents}
         
         self._step_count += 1
@@ -308,7 +309,7 @@ class CustomEnvironment(ParallelEnv):
         assert self.current_rover_pos is not None
         assert self.drone is not None and self.rover is not None
         
-        return np.concatenate([list(observation.values()), 
+        return np.concatenate([np.stack(list(observation.values())).flatten(), 
                                self.ground_truth.flatten(), 
                                normalize_pos(self.current_drone_pos), 
                                normalize_pos(self.current_rover_pos), 
@@ -416,7 +417,6 @@ class CustomEnvironment(ParallelEnv):
             path = astar_search(self.shared_belief_map, current_pos, frontier, threshold=0.55)
             if path:
                 reachable.append((frontier, path))
-        
         return reachable
 
     def _get_action_mask(self, actions):
