@@ -3,6 +3,8 @@ from pettingzoo.test import parallel_api_test
 from halow.environment import CustomEnvironment
 from halow.mappo.mappo import Mappo
 import matplotlib.pyplot as plt
+import cProfile
+import pstats
 
 if __name__ == "__main__":
     # env = CustomEnvironment()
@@ -18,3 +20,4 @@ if __name__ == "__main__":
     _, inf = customenv.reset()
     policy = Mappo(customenv)
     policy.train(runs=20)
+    

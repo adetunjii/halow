@@ -25,7 +25,7 @@ class CustomEnvironment(ParallelEnv):
         self.height = HEIGHT
         self.width = WIDTH
         self.ground_truth = None
-        self.cell_confidence = None
+        self.cell_max_agent = None
         self.shared_belief_map = None
         self.drone = None
         self.rover = None
@@ -42,16 +42,17 @@ class CustomEnvironment(ParallelEnv):
         self.ground_truth = generate_map(self.height, self.width, seed=seed,)
         self.agents = copy(self.possible_agents)
         self.shared_belief_map = np.full((self.height, self.width), 0.5, dtype=np.float32)
-        self.cell_confidence = np.zeros((self.height, self.width), dtype=np.float32)
+        self.cell_max_agent = np.full((self.height, self.width), fill_value="", dtype=object)
+        self._frontier_dirty = True 
         
         self.drone = Agent(
             name='drone',
             confidence=ConfidenceLevels(occupied=0.7, free=0.7),
-            belief_update_limit=UpdateLimit(min=-1, max=1.2),
-            radius=3,
+            belief_update_limit=UpdateLimit(min=-1.2, max=1.2),
+            radius=4,
             belief_state=np.full((self.height, self.width), 0.5, dtype=np.float32),
             start_pos=(0, 0),
-            battery_level=1
+            battery_level=1.0
         )
         
         self.current_drone_pos = self.drone.start_pos
@@ -60,12 +61,12 @@ class CustomEnvironment(ParallelEnv):
 
         self.rover = Agent(
             name='rover',
-            confidence=ConfidenceLevels(occupied=0.95, free=0.99),
+            confidence=ConfidenceLevels(occupied=0.99, free=0.99),
             belief_update_limit=UpdateLimit(min=-2.5, max=2.5),
             radius=1,
             belief_state=np.full((self.height, self.width), 0.5, dtype=np.float32),
             start_pos=(1, 0),
-            battery_level=1
+            battery_level=1.0
         )
         
         self.current_rover_pos = self.rover.start_pos
@@ -80,7 +81,7 @@ class CustomEnvironment(ParallelEnv):
         )
     
         reachable_rover_frontiers = self._get_reachable_frontiers(self.rover.detect_frontiers(), self.current_rover_pos)
-        reachable_frontiers = [f for f, _ in reachable_rover_frontiers ]
+        reachable_frontiers = [f for f in reachable_rover_frontiers]
         rover_k_frontiers = top_k_frontiers(
             self.shared_belief_map,
             reachable_frontiers,
@@ -88,8 +89,8 @@ class CustomEnvironment(ParallelEnv):
             self.rover.radius
         )
 
-        drone_action_mask = self._get_action_mask(drone_k_frontiers)
-        rover_action_mask = self._get_action_mask(rover_k_frontiers)
+        drone_action_mask = self._get_action_mask(len(drone_k_frontiers))
+        rover_action_mask = self._get_action_mask(len(rover_k_frontiers))
         
         self.drone_frontier_target = None
         self.rover_frontier_target = None
@@ -124,26 +125,29 @@ class CustomEnvironment(ParallelEnv):
         truncated = {a: False for a in self.agents}
         infos = {a: {} for a in self.agents}
         
+
         drone_k_frontiers = top_k_frontiers(
             self.shared_belief_map,
             self.drone.detect_frontiers(),
             self.current_drone_pos,
             self.drone.radius,
         )
-    
+
         reachable_rover_frontiers = self._get_reachable_frontiers(self.rover.detect_frontiers(), self.current_rover_pos)
-        reachable_frontiers = [f for f, _ in reachable_rover_frontiers ]
+        reachable_frontiers = [f for f in reachable_rover_frontiers]
         rover_k_frontiers = top_k_frontiers(
             self.shared_belief_map,
             reachable_frontiers,
             self.current_rover_pos,
             self.rover.radius
         )
-        self.rover_cached_path = {f: path for f, path in reachable_rover_frontiers}
-        
+        self.cached_drone_frontiers = drone_k_frontiers
+        self.cached_rover_frontiers = rover_k_frontiers
+        self._frontier_dirty = False
+    
         # define action_mask to determine valid actions for this step 
-        drone_action_mask = self._get_action_mask(drone_k_frontiers)
-        rover_action_mask = self._get_action_mask(rover_k_frontiers) 
+        drone_action_mask = self._get_action_mask(len(drone_k_frontiers))
+        rover_action_mask = self._get_action_mask(len(rover_k_frontiers)) 
         
         infos["drone"]["action_mask"] = drone_action_mask
         infos["rover"]["action_mask"] = rover_action_mask
@@ -167,14 +171,16 @@ class CustomEnvironment(ParallelEnv):
             self.rover_path.clear()
             self.rover_frontier_target = rover_current_target
             
-            path = self.rover_cached_path.get(self.rover_frontier_target)
+            path = astar_search(self.shared_belief_map, self.current_rover_pos, rover_current_target)
             if path:
                 self.rover_path.extend(path)
-            
-            # no path found this step
-            if len(self.rover_path) == 0:
-                print("No valid path for rover")
-                self.rover_frontier_target = None
+            else:
+                for f, _ in rover_k_frontiers:
+                    path = astar_search(self.shared_belief_map, self.current_rover_pos, f)
+                    if path:
+                        self.rover_frontier_target = f
+                        self.rover_path.extend(path)
+                        break
             
         # count number of resolved cells for information gain
         num_resolved_before = self._count_resolved_cells() 
@@ -191,6 +197,7 @@ class CustomEnvironment(ParallelEnv):
             self.drone.update_internal_belief_state(self.current_drone_pos, self.ground_truth)
             self._update_shared_belief(self.drone, self.current_drone_pos)
             self.drone.battery_level = max(0.0, self.drone.battery_level - BATTERY_DEPLETION_RATE_PER_STEP)
+            self._frontier_dirty = True
             
         if self.rover_path:
             next_rover_pos = self.rover_path.popleft()
@@ -200,6 +207,7 @@ class CustomEnvironment(ParallelEnv):
             self.rover.update_internal_belief_state(self.current_rover_pos, self.ground_truth)
             self._update_shared_belief(self.rover, self.current_rover_pos)
             self.rover.battery_level = max(0.0, self.rover.battery_level - BATTERY_DEPLETION_RATE_PER_STEP)
+            self._frontier_dirty = True
         
         # compute rewards per step
         num_resolved_after = self._count_resolved_cells()
@@ -305,7 +313,7 @@ class CustomEnvironment(ParallelEnv):
         return Discrete(NUM_FRONTIERS + 1)
     
     def _global_state(self, observation: dict):
-        assert self.cell_confidence is not None
+        assert self.cell_max_agent is not None
         assert self.current_drone_pos is not None
         assert self.current_rover_pos is not None
         assert self.drone is not None and self.rover is not None
@@ -316,8 +324,7 @@ class CustomEnvironment(ParallelEnv):
                                normalize_pos(self.current_drone_pos), 
                                normalize_pos(self.current_rover_pos), 
                                [self.drone.battery_level, self.rover.battery_level], 
-                               self.cell_confidence.flatten()]
-                            ).astype(np.float32)
+                            ]).astype(np.float32)
 
     def _get_observations(self):
         assert self.drone is not None
@@ -377,55 +384,83 @@ class CustomEnvironment(ParallelEnv):
         idx = min(action, len(scored_frontiers)-1)
         _, chosen_score = scored_frontiers[idx] 
         return max(0.0, best_score - chosen_score) / best_score
-        
+
     def _update_shared_belief(self, agent: Agent, current_pos: tuple[int, int]):
         assert self.ground_truth is not None
+        assert self.cell_max_agent is not None
+        assert self.shared_belief_map is not None
+
         observable_cells = get_observable_cells(agent.belief_state, current_pos, agent.radius)
-        
+
         for r, c in observable_cells:
+            if self.cell_max_agent[r, c] != "" and agent.name == "drone": # drone can only overwrite unobserved cells
+                continue
+
             sensor_reading = agent.get_sensor_reading((r, c), self.ground_truth)
-            
             if sensor_reading == OCCUPIED:
-                max_cell_accuracy = agent.confidence.occupied
                 log_reading = np.log(agent.confidence.occupied / (1.0 - agent.confidence.occupied))
+                drone_cap = agent.confidence.occupied
             else:
-                max_cell_accuracy = agent.confidence.free
                 log_reading = np.log((1.0 - agent.confidence.free) / agent.confidence.free)
-            
-            noisy_log_reading = np.random.normal(loc=log_reading, scale=COMMUNICATION_NOISE_SCALE)
-            clipped_log_reading = np.clip(noisy_log_reading, agent.belief_update_limit.min, agent.belief_update_limit.max)
-            
-            assert self.cell_confidence is not None
-            assert self.shared_belief_map is not None
-            
-            if max_cell_accuracy < self.cell_confidence[r, c]: continue
-            
+                drone_cap = 1.0 - agent.confidence.free
+
+            if agent.name == "drone":
+                log_reading = np.random.normal(loc=log_reading, scale=COMMUNICATION_NOISE_SCALE)
+
+            log_reading = np.clip(log_reading, agent.belief_update_limit.min, agent.belief_update_limit.max)
+
             prior = np.clip(self.shared_belief_map[r, c], 0.01, 0.99)
             log_prior = np.log(prior / (1.0 - prior))
-            log_update = log_prior + clipped_log_reading
-            
-            self.shared_belief_map[r, c] = 1.0 / (1.0 + np.exp(-log_update))
-            self.cell_confidence[r, c] = max(self.cell_confidence[r, c], max_cell_accuracy) 
-            
+            log_update = log_prior + log_reading
+            new_prob = 1.0 / (1.0 + np.exp(-log_update))
+
+  
+            if agent.name == "drone": # drone's accuracy is capped at sensor limits
+                if sensor_reading == OCCUPIED:
+                    new_prob = min(new_prob, drone_cap)
+                else:
+                    new_prob = max(new_prob, drone_cap)
+
+            self.shared_belief_map[r, c] = new_prob
+            self.cell_max_agent[r, c] = agent.name    
+
     def _count_resolved_cells(self):
         """Counts the number of cells in the shared belief map that have a known status"""
         assert self.shared_belief_map is not None
         return int(np.sum((self.shared_belief_map < FREE_THRESHOLD) | (self.shared_belief_map > OBSTACLE_THRESHOLD)))
     
-    def _get_reachable_frontiers(self, frontiers, current_pos):
+    def _get_reachable_frontiers(self, frontiers, current_pos) -> list:
         assert self.shared_belief_map is not None
-        reachable = []
+
+        if not frontiers:
+            return []
         
-        for frontier in frontiers:
-            path = astar_search(self.shared_belief_map, current_pos, frontier, threshold=0.55)
-            if path:
-                reachable.append((frontier, path))
+        frontier_set = set(frontiers)
+        reachable = []
+        visited = {current_pos}
+        queue = deque([current_pos])
+        
+        while queue and len(reachable) < len(frontiers):
+            r, c = queue.popleft()
+            
+            if (r, c) in frontier_set:
+                reachable.append((r, c))
+            
+            for dr, dc in neighboring_cells:
+                nr, nc = r + dr, c + dc
+                if (nr, nc) not in visited and \
+                0 <= nr < self.height and \
+                0 <= nc < self.width and \
+                self.shared_belief_map[nr, nc] < 0.6:
+                    visited.add((nr, nc))
+                    queue.append((nr, nc))
+        
         return reachable
 
-    def _get_action_mask(self, actions):
+    def _get_action_mask(self, num_frontiers):
         k = NUM_FRONTIERS
         mask = np.zeros((k+1), dtype=np.float32)
-        for i in range(min(k, len(actions))):
+        for i in range(min(k, num_frontiers)):
             mask[i] = 1.0
         mask[k] = 1.0
         return mask

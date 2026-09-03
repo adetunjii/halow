@@ -11,6 +11,8 @@ from halow.environment import CustomEnvironment
 from gymnasium.spaces import Discrete, Box
 from halow.constants import MAX_STEPS_PER_EPISODE
 import numpy as np
+import cProfile
+import pstats
 
 root = os.path.dirname(__file__)
 
@@ -85,6 +87,9 @@ class Mappo:
                 seed = np.random.randint(0, 10000)
                 obs, infos = self.env.reset(seed=seed)
                 terminated, truncated = False, False
+                # self.env.render()
+                profiler = cProfile.Profile()
+                profiler.enable()
                 while not terminated and not truncated:
                     with torch.no_grad():
                         drone_obs = torch.tensor(obs["drone"], device=self.device)
@@ -110,12 +115,16 @@ class Mappo:
                     obs = next_obs
                     terminated = any(terminated.values())
                     truncated = any(truncated.values())
+                    # self.env.render()
                 if truncated:
                     print("Yes truncated")
                     global_state = torch.tensor(self.env.global_state, device=self.device, dtype=torch.float32)
                     final_value = self.critic(global_state)
-                    episode["final_value"] = final_value.cpu().numpy()
-            
+                    episode["final_value"] = final_value.detach().cpu().numpy()
+                profiler.disable()
+                stats = pstats.Stats(profiler)
+                stats.sort_stats("cumulative")
+                stats.print_stats(15)
                 collected_episodes.append({
                     "observations": episode["observations"],
                     "rewards": episode["rewards"]
@@ -209,8 +218,7 @@ class Mappo:
         }
         torch.save(checkpoint, os.path.join(root, f"weights/checkpoint_run_{run}.pt"))
         torch.save(checkpoint, os.path.join(root, "weights/policy.pt"))
-        
-        
+         
     def setup_logger(self):
         log_path = os.path.join(root, "logs/training_log.csv")
         with open(log_path, "w", newline="") as f:

@@ -10,8 +10,7 @@ def get_observable_cells(belief_map: np.ndarray, current_pos: tuple[int, int], r
     
     observable_cells = []
     
-    height, width = belief_map.shape
-    
+    height, width = belief_map.shape 
     for r in range(-radius, radius+1):
         for c in range(-radius, radius+1):
             if r**2 + c**2 <= radius**2:
@@ -80,6 +79,106 @@ def astar_search(grid: np.ndarray, start_pos, target_pos, threshold=0.6) -> list
                 heapq.heappush(openset, (f_cost, neighbor))
     
     return None
+
+# Set the compression factor (2x2 merging)
+FACTOR = 2
+
+# def astar_search(grid: np.ndarray, start_pos, target_pos, threshold=0.6) -> list[tuple[int, int]] | None:
+#     """
+#     Compressed A* search using 2x2 node merging.
+#     Returns a path in original grid coordinates, or None if unreachable.
+#     """
+#     height, width = grid.shape
+#     factor = FACTOR
+
+#     # --- 1. Pad the grid so dimensions are multiples of factor ---
+#     pad_h = (factor - height % factor) % factor
+#     pad_w = (factor - width % factor) % factor
+#     if pad_h > 0 or pad_w > 0:
+#         # Pad with the threshold value so padded cells are treated as obstacles
+#         grid_padded = np.pad(grid, ((0, pad_h), (0, pad_w)), mode='constant', constant_values=threshold)
+#     else:
+#         grid_padded = grid
+
+#     padded_h, padded_w = grid_padded.shape
+#     comp_h, comp_w = padded_h // factor, padded_w // factor
+
+#     # --- 2. Build the compressed grid ---
+#     # A compressed cell is free if the average of its 2x2 block is < threshold
+#     comp_grid = np.zeros((comp_h, comp_w), dtype=bool)  # True = free
+#     for r in range(comp_h):
+#         for c in range(comp_w):
+#             block = grid_padded[r*factor:(r+1)*factor, c*factor:(c+1)*factor]
+#             comp_grid[r, c] = block.mean() < threshold
+
+#     # --- 3. Map original start/target to compressed coordinates ---
+#     def to_comp(r: int, c: int) -> tuple[int, int]:
+#         # Clamp to padded bounds, then divide
+#         r_clamped = min(max(r, 0), padded_h - 1)
+#         c_clamped = min(max(c, 0), padded_w - 1)
+#         return (r_clamped // factor, c_clamped // factor)
+
+#     start_comp = to_comp(*start_pos)
+#     target_comp = to_comp(*target_pos)
+
+#     # If start or target is blocked in compressed view, return None
+#     if not comp_grid[start_comp[0], start_comp[1]] or not comp_grid[target_comp[0], target_comp[1]]:
+#         return None
+
+#     # --- 4. A* search on the compressed grid ---
+#     # 8-directional movement offsets (matching original spirit with np.hypot)
+#     offsets = [
+#         (1, 0), (-1, 0), (0, 1), (0, -1),
+#         (1, 1), (1, -1), (-1, 1), (-1, -1)
+#     ]
+
+#     def neighbors(pos: tuple[int, int]):
+#         r, c = pos
+#         for dr, dc in offsets:
+#             nr, nc = r + dr, c + dc
+#             if 0 <= nr < comp_h and 0 <= nc < comp_w and comp_grid[nr, nc]:
+#                 yield (nr, nc)
+
+#     openset = []
+#     heapq.heappush(openset, (0, start_comp))
+#     visited = set()
+#     parent = dict()
+#     g_score = {start_comp: 0}
+
+#     while openset:
+#         _, current = heapq.heappop(openset)
+#         if current in visited:
+#             continue
+#         visited.add(current)
+
+#         if current == target_comp:
+#             # Reconstruct compressed path
+#             comp_path = []
+#             while current in parent:
+#                 comp_path.append(current)
+#                 current = parent[current]
+#             comp_path.append(start_comp)
+#             comp_path.reverse()
+#             break
+#         else:
+#             continue  # placeholder, will be handled by else if loop finishes
+#     else:
+#         return None  # No path found
+
+#     # --- 5. Decompress the path back to original grid coordinates ---
+#     def decompress(r_comp: int, c_comp: int) -> tuple[int, int]:
+#         # Return the center of the 2x2 block, clamped to original grid bounds
+#         r_orig = r_comp * factor + factor // 2
+#         c_orig = c_comp * factor + factor // 2
+#         return (min(r_orig, height - 1), min(c_orig, width - 1))
+
+#     # Force start and end to be exactly the user-provided coordinates
+#     final_path = [start_pos]
+#     for comp_node in comp_path[1:-1]:
+#         final_path.append(decompress(*comp_node))
+#     final_path.append(target_pos)
+
+#     return final_path
 
 def interpolate_path(start_pos, target_pos):
     start_row, start_col = start_pos

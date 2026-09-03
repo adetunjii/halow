@@ -17,6 +17,7 @@ class Actor(nn.Module):
     def act(self, x, action_mask=None):
         logits = self.logits(x, action_mask)
         dist = Categorical(logits=logits)
+        dist._validate_args = False
         action = dist.sample()
         log_prob = dist.log_prob(action)
         return action, log_prob
@@ -31,6 +32,7 @@ class Actor(nn.Module):
     def compute_entropy(self, x, action, action_mask=None):
         logits = self.logits(x, action_mask)
         dist = Categorical(logits=logits)
+        dist._validate_args = False
         log_prob = dist.log_prob(action)
         return log_prob, dist.entropy()
  
