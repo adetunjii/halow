@@ -10,9 +10,10 @@ from typing import Any
 from halow.environment import CustomEnvironment
 from gymnasium.spaces import Discrete, Box
 from halow.constants import MAX_STEPS_PER_EPISODE
+from halow.helpers import setup_logger, log_run
 import numpy as np
-import cProfile
-import pstats
+# import cProfile
+# import pstats
 
 root = os.path.dirname(__file__)
 
@@ -43,7 +44,7 @@ class Mappo:
     def _init_hyperparameters(self):
         self.gamma = 0.95
         self.max_timesteps_per_episode = MAX_STEPS_PER_EPISODE
-        self.num_episodes_per_batch = 512
+        self.num_episodes_per_batch = 128
         self.num_layers = 3
         self.hidden_dim = 64
         self.num_agents = 2
@@ -56,10 +57,20 @@ class Mappo:
         self.entropy_coefficient = 0.01
         self.max_grad_norm = 0.5
     
-    def train(self, runs=10):
-        log_path = self.setup_logger()
+    def train(self, runs=10, resume=False):
+        start = 0
+        log_path = os.path.join(root, "logs/training_log.csv")
         
-        for run in range(runs):
+        if resume:
+            policy_path = os.path.join(root, "weights", "policy.pt")
+            if os.path.exists(log_path):
+                start = self._load_policy(policy_path) + 1
+                print(f"Resuming from training run: {start}")
+            else:
+                print(f"Checkpoint not found, starting from {start}")
+                setup_logger(log_path)
+            
+        for run in range(start, runs):
             buf = RolloutBuffer(
                 num_agents=2,
                 num_episodes=self.num_episodes_per_batch,
@@ -88,8 +99,8 @@ class Mappo:
                 obs, infos = self.env.reset(seed=seed)
                 terminated, truncated = False, False
                 # self.env.render()
-                profiler = cProfile.Profile()
-                profiler.enable()
+                # profiler = cProfile.Profile()
+                # profiler.enable()
                 while not terminated and not truncated:
                     with torch.no_grad():
                         drone_obs = torch.tensor(obs["drone"], device=self.device)
@@ -121,10 +132,10 @@ class Mappo:
                     global_state = torch.tensor(self.env.global_state, device=self.device, dtype=torch.float32)
                     final_value = self.critic(global_state)
                     episode["final_value"] = final_value.detach().cpu().numpy()
-                profiler.disable()
-                stats = pstats.Stats(profiler)
-                stats.sort_stats("cumulative")
-                stats.print_stats(15)
+                # profiler.disable()
+                # stats = pstats.Stats(profiler)
+                # stats.sort_stats("cumulative")
+                # stats.print_stats(15)
                 collected_episodes.append({
                     "observations": episode["observations"],
                     "rewards": episode["rewards"]
@@ -142,22 +153,22 @@ class Mappo:
             rover_entropies = []
             
             for i in range(self.epochs):
-                self.drone_actor_optim.zero_grad()
-                self.rover_actor_optim.zero_grad()
-                self.critic_optim.zero_grad()
-                
+                print(f"Training run: {run}, Epoch: {i}")                
                 # optimize critic network
+                drone_grad_norm = None
+                rover_grad_norm = None
+                critic_grad_norm = None
                 for start in range(0, batch_global_states.size(0), self.batch_size):
                     end = start + self.batch_size
+                    self.critic_optim.zero_grad()
                     current_values = self.critic(batch_global_states[start:end])
                     critic_loss = torch.nn.functional.mse_loss(current_values, batch_returns[start:end], reduction="mean")
                     critic_loss.backward()
                     critic_losses.append(critic_loss.item())
-                
-                # optimize the actor network            
-                for start in range(0, batch_obs.size(0), self.batch_size):
-                    end = start + self.batch_size
-                    
+                    critic_grad_norm = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=self.max_grad_norm)
+                    self.critic_optim.step()
+
+                    self.drone_actor_optim.zero_grad()
                     drone_obs = batch_obs[start:end, 0, :]
                     drone_actions = batch_actions[start:end, 0]
                     drone_action_masks = batch_action_masks[start:end, 0]
@@ -172,7 +183,10 @@ class Mappo:
                     drone_actor_loss.backward()
                     drone_actor_losses.append(drone_actor_loss.item())
                     drone_entropies.append(drone_entropy_loss.mean().item())
+                    drone_grad_norm = torch.nn.utils.clip_grad_norm_(self.drone_actor.parameters(), max_norm=self.max_grad_norm)
+                    self.drone_actor_optim.step()
                     
+                    self.rover_actor_optim.zero_grad()
                     rover_obs = batch_obs[start:end, 1, :]
                     rover_actions = batch_actions[start:end, 1]
                     rover_action_masks = batch_action_masks[start:end, 1]
@@ -186,29 +200,22 @@ class Mappo:
                     rover_actor_loss.backward()
                     rover_actor_losses.append(rover_actor_loss.item())
                     rover_entropies.append(rover_entropy_loss.mean().item())
-
-                
-                # gradient clipping
-                drone_grad_norm = torch.nn.utils.clip_grad_norm_(self.drone_actor.parameters(), max_norm=self.max_grad_norm)
-                rover_grad_norm = torch.nn.utils.clip_grad_norm_(self.rover_actor.parameters(), max_norm=self.max_grad_norm)
-                critic_grad_norm = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=self.max_grad_norm)
-                
-                self.drone_actor_optim.step()
-                self.rover_actor_optim.step()
-                self.critic_optim.step()
-                
-                self.log_run(
+                    rover_grad_norm = torch.nn.utils.clip_grad_norm_(self.rover_actor.parameters(), max_norm=self.max_grad_norm)
+                    self.rover_actor_optim.step()
+            
+            log_run(
                     log_path, run,
                     collected_episodes,
                     critic_losses, drone_actor_losses, rover_actor_losses,
                     drone_entropies, rover_entropies,
-                    drone_grad_norm.item(), rover_grad_norm.item(), critic_grad_norm.item()
-                )
-                self.save_policy(run)
+                    drone_grad_norm.item(), rover_grad_norm.item(), critic_grad_norm.item() # type: ignore
+            )       
+            self._save_policy(run)
                 
         
-    def save_policy(self, run: int):
+    def _save_policy(self, run: int):
         checkpoint = {
+            "run": run,
             "drone_actor": self.drone_actor.state_dict(),
             "rover_actor": self.rover_actor.state_dict(),
             "critic": self.critic.state_dict(),
@@ -218,51 +225,13 @@ class Mappo:
         }
         torch.save(checkpoint, os.path.join(root, f"weights/checkpoint_run_{run}.pt"))
         torch.save(checkpoint, os.path.join(root, "weights/policy.pt"))
-         
-    def setup_logger(self):
-        log_path = os.path.join(root, "logs/training_log.csv")
-        with open(log_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                "run",
-                "mean_return_drone",
-                "mean_return_rover", 
-                "std_return_drone",
-                "std_return_rover",
-                "mean_ep_length",
-                "std_ep_length",
-                "critic_loss",
-                "drone_actor_loss",
-                "rover_actor_loss",
-                "drone_entropy",
-                "rover_entropy",
-                "drone_grad_norm",
-                "rover_grad_norm",
-                "critic_grad_norm"
-            ])
-        return log_path
-
-
-    def log_run(self, log_path, run, episodes, critic_losses, drone_actor_losses, rover_actor_losses, drone_entropies, rover_entropies, drone_grad_norm, rover_grad_norm, critic_grad_norm):
-        # episode-level stats — computed before batchify() clears the buffer
-        episode_returns_drone = [sum(r[0] for r in ep["rewards"]) for ep in episodes]
-        episode_returns_rover = [sum(r[1] for r in ep["rewards"]) for ep in episodes]
-        episode_lengths = [len(ep["observations"]) for ep in episodes]
-
-        row = [
-            run,
-            np.mean(episode_returns_drone),
-            np.mean(episode_returns_rover),
-            np.std(episode_returns_drone),
-            np.std(episode_returns_rover),
-            np.mean(episode_lengths),
-            np.std(episode_lengths),
-            np.mean(critic_losses),
-            np.mean(drone_actor_losses),
-            np.mean(rover_actor_losses),
-            np.mean(drone_entropies),
-            np.mean(rover_entropies),
-            drone_grad_norm,
-            rover_grad_norm,
-            critic_grad_norm
-        ]
+        
+    def _load_policy(self, path):
+        checkpt = torch.load(path, map_location=self.device)
+        self.drone_actor.load_state_dict(checkpt["drone_actor"])
+        self.rover_actor.load_state_dict(checkpt["rover_actor"])
+        self.critic.load_state_dict(checkpt["critic"])
+        self.drone_actor_optim.load_state_dict(checkpt["drone_optim"])
+        self.rover_actor_optim.load_state_dict(checkpt["rover_optim"])
+        self.critic_optim.load_state_dict(checkpt["critic_optim"])
+        return 19 # todo: remove hardcoded value

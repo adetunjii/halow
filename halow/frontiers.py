@@ -3,10 +3,9 @@ from halow.helpers import get_observable_cells, normalize_pos
 from halow.constants import NUM_FRONTIERS, FREE_THRESHOLD, OBSTACLE_THRESHOLD
 
 def next_best_view_score(belief_map: np.ndarray, frontier: tuple[int, int], current_pos: tuple[int, int], radius: int):
-    frontier_row, frontier_col = frontier 
-    observable_cells = get_observable_cells(belief_map, current_pos, radius)    
+    observable_cells = get_observable_cells(belief_map, frontier, radius)    
     total_info = sum(1 for r, c in observable_cells if FREE_THRESHOLD <= belief_map[r, c] <= OBSTACLE_THRESHOLD)
-    distance = np.hypot(current_pos[0] - frontier_row, current_pos[1] - frontier_col)
+    distance = np.hypot(current_pos[0] - frontier[0], current_pos[1] - frontier[1])
     distance = max(distance, 1.0)
     eps = 1e-2
     score = (total_info + eps) / distance

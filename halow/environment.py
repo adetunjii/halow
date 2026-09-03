@@ -37,6 +37,7 @@ class CustomEnvironment(ParallelEnv):
         self.fig, self.ax_mapped, self.ax_ground_truth = None, None, None
         self.global_state = None
         self.possible_agents = ["drone", "rover"]
+        self.battery_bonus_coefficient = 0.4
     
     def reset(self, seed=None, options=None):
         self.ground_truth = generate_map(self.height, self.width, seed=seed,)
@@ -45,31 +46,33 @@ class CustomEnvironment(ParallelEnv):
         self.cell_max_agent = np.full((self.height, self.width), fill_value="", dtype=object)
         self._frontier_dirty = True 
         
+        free_cells = np.argwhere(self.ground_truth != OCCUPIED)
+        
+        drone_start_pos = tuple(free_cells[np.random.randint(0, len(free_cells))])
+        self.current_drone_pos = (drone_start_pos[0], drone_start_pos[1])
         self.drone = Agent(
             name='drone',
             confidence=ConfidenceLevels(occupied=0.7, free=0.7),
             belief_update_limit=UpdateLimit(min=-1.2, max=1.2),
-            radius=4,
+            radius=3,
             belief_state=np.full((self.height, self.width), 0.5, dtype=np.float32),
-            start_pos=(0, 0),
+            start_pos=self.current_drone_pos,
             battery_level=1.0
         )
-        
-        self.current_drone_pos = self.drone.start_pos
         self.drone.update_internal_belief_state(self.current_drone_pos, self.ground_truth)
         self._update_shared_belief(self.drone, self.current_drone_pos)
 
+        rover_start_pos = tuple(free_cells[np.random.randint(0, len(free_cells))])
+        self.current_rover_pos = (rover_start_pos[0], rover_start_pos[1])
         self.rover = Agent(
             name='rover',
             confidence=ConfidenceLevels(occupied=0.99, free=0.99),
             belief_update_limit=UpdateLimit(min=-2.5, max=2.5),
-            radius=1,
+            radius=2,
             belief_state=np.full((self.height, self.width), 0.5, dtype=np.float32),
-            start_pos=(1, 0),
+            start_pos=self.current_rover_pos,
             battery_level=1.0
         )
-        
-        self.current_rover_pos = self.rover.start_pos
         self.rover.update_internal_belief_state(self.current_rover_pos, self.ground_truth)
         self._update_shared_belief(self.rover, self.current_rover_pos)
         
@@ -125,7 +128,6 @@ class CustomEnvironment(ParallelEnv):
         truncated = {a: False for a in self.agents}
         infos = {a: {} for a in self.agents}
         
-
         drone_k_frontiers = top_k_frontiers(
             self.shared_belief_map,
             self.drone.detect_frontiers(),
@@ -141,16 +143,6 @@ class CustomEnvironment(ParallelEnv):
             self.current_rover_pos,
             self.rover.radius
         )
-        self.cached_drone_frontiers = drone_k_frontiers
-        self.cached_rover_frontiers = rover_k_frontiers
-        self._frontier_dirty = False
-    
-        # define action_mask to determine valid actions for this step 
-        drone_action_mask = self._get_action_mask(len(drone_k_frontiers))
-        rover_action_mask = self._get_action_mask(len(rover_k_frontiers)) 
-        
-        infos["drone"]["action_mask"] = drone_action_mask
-        infos["rover"]["action_mask"] = rover_action_mask
         
         drone_current_target  = self._map_action_to_frontier(drone_action, drone_k_frontiers)
         drone_penalty = self._compute_action_penalty(action=drone_action, scored_frontiers=drone_k_frontiers)
@@ -222,6 +214,12 @@ class CustomEnvironment(ParallelEnv):
         if coverage >= COVERAGE_TARGET:
             print(f"Terminating: coverage {coverage:.2f}%")
             terminated = {a: True for a in self.agents}
+
+            battery_bonus = (self.drone.battery_level + self.rover.battery_level) * self.battery_bonus_coefficient
+
+            # reward the agents if batteries are not completely depleted
+            rewards["drone"] += battery_bonus
+            rewards["rover"] += battery_bonus
         
         self._step_count += 1
         if self._step_count >= MAX_STEPS_PER_EPISODE:
@@ -239,19 +237,47 @@ class CustomEnvironment(ParallelEnv):
 
         self.agents = active_agents
         observations = self._get_observations()
-        self.global_state = self._global_state(observations) 
+        self.global_state = self._global_state(observations)
+        
+        drone_k_frontiers = top_k_frontiers(
+            self.shared_belief_map,
+            self.drone.detect_frontiers(),
+            self.current_drone_pos,
+            self.drone.radius,
+        )
+
+        reachable_rover_frontiers = self._get_reachable_frontiers(self.rover.detect_frontiers(), self.current_rover_pos)
+        reachable_frontiers = [f for f in reachable_rover_frontiers]
+        rover_k_frontiers = top_k_frontiers(
+            self.shared_belief_map,
+            reachable_frontiers,
+            self.current_rover_pos,
+            self.rover.radius
+        )
+            
+        # define action_mask to determine valid actions for this step 
+        drone_action_mask = self._get_action_mask(len(drone_k_frontiers))
+        rover_action_mask = self._get_action_mask(len(rover_k_frontiers)) 
+        infos["drone"]["action_mask"] = drone_action_mask
+        infos["rover"]["action_mask"] = rover_action_mask
+        
         return observations, rewards, terminated, truncated, infos    
     
     def render(self):
+        self.drone_animation_frames = get_animation_frames(os.path.join(root, "./assets/drone.gif"))
+        self.rover_animation_frames = get_animation_frames(os.path.join(root, "./assets/rover.gif"))
+        
         assert self.drone is not None and self.drone.start_pos is not None
         assert self.rover is not None and self.rover.start_pos is not None
-        
+        assert self.drone_animation_frames is not None, f"Drone animation frames failed to load"
+        assert self.rover_animation_frames is not None, f"Rover animation frames failed to load"
+
         if self.fig is None:
             self.fig, (self.ax_ground_truth, self.ax_mapped) = plt.subplots(nrows=1, ncols=2)
             plt.ion()
             
             self.ax_ground_truth.set_title("Ground Truth")
-            self.ax_ground_truth.imshow(self.ground_truth, cmap="terrain", vmin=0, vmax=2, interpolation='bicubic')
+            self.ground_truth_img = self.ax_ground_truth.imshow(self.ground_truth, cmap="terrain", vmin=0, vmax=2, interpolation='bicubic')
             self.mapped_img = self.ax_mapped.imshow(self.shared_belief_map, cmap="Greys", vmin=0, vmax=1)
             
             for ax in (self.ax_ground_truth, self.ax_mapped):
@@ -259,13 +285,7 @@ class CustomEnvironment(ParallelEnv):
                 ax.set_xlim(-0.5, self.width - 0.5)
                 ax.invert_yaxis()
                 ax.xaxis.tick_top()
-            
-            self.drone_animation_frames = get_animation_frames(os.path.join(root, "./assets/drone.gif"))
-            self.rover_animation_frames = get_animation_frames(os.path.join(root, "./assets/rover.gif"))
 
-            assert self.drone_animation_frames is not None, f"Drone animation frames failed to load"
-            assert self.rover_animation_frames is not None, f"Rover animation frames failed to load"
-            
             self.frame_idx = 0
             drone_start_row, drone_start_col = self.drone.start_pos
             self.drone_img_box = OffsetImage(self.drone_animation_frames[0], zoom=0.35)
@@ -281,6 +301,7 @@ class CustomEnvironment(ParallelEnv):
             plt.tight_layout()
         
         self.mapped_img.set_data(self.shared_belief_map)
+        self.ground_truth_img.set_data(self.ground_truth)
         assert self.current_drone_pos is not None, f"Cannot plot drone, current_drone_pos is None"
         assert self.current_rover_pos is not None, f"Cannot plot rover, current_rover_pos is None"
         assert self.drone_animation_frames is not None and self.rover_animation_frames is not None
@@ -427,7 +448,7 @@ class CustomEnvironment(ParallelEnv):
     def _count_resolved_cells(self):
         """Counts the number of cells in the shared belief map that have a known status"""
         assert self.shared_belief_map is not None
-        return int(np.sum((self.shared_belief_map < FREE_THRESHOLD) | (self.shared_belief_map > OBSTACLE_THRESHOLD)))
+        return int(np.sum((self.shared_belief_map < 0.2) | (self.shared_belief_map > 0.8)))
     
     def _get_reachable_frontiers(self, frontiers, current_pos) -> list:
         assert self.shared_belief_map is not None

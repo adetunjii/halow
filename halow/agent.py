@@ -53,7 +53,6 @@ class Agent:
         """Update agent's internal belief map based on current sensor readings"""
         
         observable_cells = get_observable_cells(self.belief_state, current_pos, self.radius)
-        
         for r, c in observable_cells:
             prior = np.clip(self.belief_state[r, c], 0.01, 0.99)
             log_prior = np.log(prior / (1.0 - prior))
@@ -68,3 +67,4 @@ class Agent:
             
             posterior = 1.0 / (1.0 + np.exp(-clipped_log_update))
             self.belief_state[r, c] = posterior
+            

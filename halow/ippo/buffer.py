@@ -3,11 +3,13 @@ import numpy as np
 from typing import Any
 
 class RolloutBuffer:
+    """IPPO rollout buffer — stores per-agent values from independent critics
+    instead of global-state values from a centralized critic."""
+    
     def __init__(
         self,
         action_space,
         observation_space,
-        global_state_space,
         gamma,
         td_lambda,
         device,
@@ -16,7 +18,6 @@ class RolloutBuffer:
     ):
         self.action_space = action_space
         self.observation_space = observation_space
-        self.global_state_space = global_state_space
         self.gamma = gamma
         self.num_episodes = num_episodes
         self.episodes: list[dict[str, Any] | None] = [None] * self.num_episodes
@@ -30,7 +31,7 @@ class RolloutBuffer:
         eps = self.rollout_to_tensor(episode)
         eps["final_value"] = torch.tensor(final_value, dtype=torch.float32)
         self.compute_advantages(eps)
-        self.episodes[self.episode_idx] = eps # type: ignore
+        self.episodes[self.episode_idx] = eps  # type: ignore
         self.episode_idx += 1
         
     def rollout_to_tensor(self, episode: dict[str, Any]):
@@ -72,19 +73,18 @@ class RolloutBuffer:
         log_probs = torch.zeros(total_obs_collected, self.num_agents, dtype=torch.float32).to(self.device)
         returns = torch.zeros(total_obs_collected, self.num_agents, dtype=torch.float32).to(self.device)
         advantages = torch.zeros(total_obs_collected, self.num_agents, dtype=torch.float32).to(self.device)
-        global_states = torch.zeros(total_obs_collected, self.global_state_space, dtype=torch.float32).to(self.device)
 
         idx = 0
         for episode, length in zip(self.episodes, length_per_episode):
             assert episode is not None
             observations[idx : idx+length] = episode["observations"]
-            action_masks[idx : idx+length] = episode["action_masks"] # actions that can be taken
-            actions[idx : idx + length] = episode["actions"] # actions output from the actor network
+            action_masks[idx : idx+length] = episode["action_masks"]
+            actions[idx : idx + length] = episode["actions"]
             returns[idx : idx + length] = episode["returns"]
             advantages[idx : idx + length] = episode["advantages"]
-            global_states[idx: idx + length] = episode["global_state"]
             log_probs[idx: idx + length] = episode["log_probs"]
             idx += length
+        
         advantages = (advantages - advantages.mean(dim=0)) / (advantages.std(dim=0) + 1e-9)
         self.episodes = [None] * self.num_episodes
         self.episode_idx = 0
@@ -96,5 +96,5 @@ class RolloutBuffer:
             log_probs,
             returns,
             advantages,
-            global_states
         )
+
