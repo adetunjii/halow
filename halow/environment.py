@@ -37,9 +37,10 @@ class CustomEnvironment(ParallelEnv):
         self.fig, self.ax_mapped, self.ax_ground_truth = None, None, None
         self.global_state = None
         self.possible_agents = ["drone", "rover"]
-        self.battery_bonus_coefficient = 0.4
+        self.battery_bonus_coefficient = 0.2
     
     def reset(self, seed=None, options=None):
+        """Resets the map, spawns agents on free cells, and initializes agent's internal belief maps"""
         self.ground_truth = generate_map(self.height, self.width, seed=seed,)
         self.agents = copy(self.possible_agents)
         self.shared_belief_map = np.full((self.height, self.width), 0.5, dtype=np.float32)
@@ -81,6 +82,9 @@ class CustomEnvironment(ParallelEnv):
             self.drone.detect_frontiers(),
             self.current_drone_pos,
             self.drone.radius,
+            agent=self.drone.name,
+            secondary_target=None,
+            steps_per_action=DRONE_STEPS,
         )
     
         reachable_rover_frontiers = self._get_reachable_frontiers(self.rover.detect_frontiers(), self.current_rover_pos)
@@ -89,7 +93,10 @@ class CustomEnvironment(ParallelEnv):
             self.shared_belief_map,
             reachable_frontiers,
             self.current_rover_pos,
-            self.rover.radius
+            self.rover.radius,
+            agent=self.rover.name,
+            secondary_target=None,
+            steps_per_action=1,
         )
 
         drone_action_mask = self._get_action_mask(len(drone_k_frontiers))
@@ -112,6 +119,7 @@ class CustomEnvironment(ParallelEnv):
         return observations, infos
     
     def step(self, actions):
+        
         assert self.drone is not None
         assert self.rover is not None
         assert self.current_drone_pos is not None
@@ -119,6 +127,7 @@ class CustomEnvironment(ParallelEnv):
         assert self.shared_belief_map is not None
         assert self.drone_path is not None
         assert self.rover_path is not None
+        assert self.ground_truth is not None
             
         drone_action = actions['drone']
         rover_action = actions['rover']
@@ -133,6 +142,9 @@ class CustomEnvironment(ParallelEnv):
             self.drone.detect_frontiers(),
             self.current_drone_pos,
             self.drone.radius,
+            agent=self.drone.name,
+            secondary_target=self.rover_frontier_target,
+            steps_per_action=DRONE_STEPS
         )
 
         reachable_rover_frontiers = self._get_reachable_frontiers(self.rover.detect_frontiers(), self.current_rover_pos)
@@ -141,7 +153,10 @@ class CustomEnvironment(ParallelEnv):
             self.shared_belief_map,
             reachable_frontiers,
             self.current_rover_pos,
-            self.rover.radius
+            self.rover.radius,
+            agent=self.rover.name,
+            secondary_target=self.drone_frontier_target,
+            steps_per_action=1
         )
         
         drone_current_target  = self._map_action_to_frontier(drone_action, drone_k_frontiers)
@@ -167,7 +182,7 @@ class CustomEnvironment(ParallelEnv):
             if path:
                 self.rover_path.extend(path)
             else:
-                for f, _ in rover_k_frontiers:
+                for f, score in rover_k_frontiers:
                     path = astar_search(self.shared_belief_map, self.current_rover_pos, f)
                     if path:
                         self.rover_frontier_target = f
@@ -195,11 +210,20 @@ class CustomEnvironment(ParallelEnv):
             next_rover_pos = self.rover_path.popleft()
             next_rover_row, next_rover_col = int(round(next_rover_pos[0])), int(round(next_rover_pos[1]))  
             
-            self.current_rover_pos = (next_rover_row, next_rover_col)
-            self.rover.update_internal_belief_state(self.current_rover_pos, self.ground_truth)
-            self._update_shared_belief(self.rover, self.current_rover_pos)
-            self.rover.battery_level = max(0.0, self.rover.battery_level - BATTERY_DEPLETION_RATE_PER_STEP)
-            self._frontier_dirty = True
+            # Physical collision prevention: rover cannot enter an obstacle cell
+            if self.ground_truth[next_rover_row, next_rover_col] == OCCUPIED:
+                # Rover is blocked by an obstacle: stays in place, senses it, and clears path to replan
+                self.rover.update_internal_belief_state(self.current_rover_pos, self.ground_truth)
+                self._update_shared_belief(self.rover, self.current_rover_pos)
+                self.rover_path.clear()
+                self.rover.battery_level = max(0.0, self.rover.battery_level - BATTERY_DEPLETION_RATE_PER_STEP)
+                self._frontier_dirty = True
+            else:
+                self.current_rover_pos = (next_rover_row, next_rover_col)
+                self.rover.update_internal_belief_state(self.current_rover_pos, self.ground_truth)
+                self._update_shared_belief(self.rover, self.current_rover_pos)
+                self.rover.battery_level = max(0.0, self.rover.battery_level - BATTERY_DEPLETION_RATE_PER_STEP)
+                self._frontier_dirty = True
         
         # compute rewards per step
         num_resolved_after = self._count_resolved_cells()
@@ -215,9 +239,8 @@ class CustomEnvironment(ParallelEnv):
             print(f"Terminating: coverage {coverage:.2f}%")
             terminated = {a: True for a in self.agents}
 
-            battery_bonus = (self.drone.battery_level + self.rover.battery_level) * self.battery_bonus_coefficient
-
             # reward the agents if batteries are not completely depleted
+            battery_bonus = (self.drone.battery_level + self.rover.battery_level) * self.battery_bonus_coefficient
             rewards["drone"] += battery_bonus
             rewards["rover"] += battery_bonus
         
@@ -244,6 +267,9 @@ class CustomEnvironment(ParallelEnv):
             self.drone.detect_frontiers(),
             self.current_drone_pos,
             self.drone.radius,
+            agent=self.drone.name,
+            secondary_target=self.rover_frontier_target,
+            steps_per_action=DRONE_STEPS
         )
 
         reachable_rover_frontiers = self._get_reachable_frontiers(self.rover.detect_frontiers(), self.current_rover_pos)
@@ -252,7 +278,10 @@ class CustomEnvironment(ParallelEnv):
             self.shared_belief_map,
             reachable_frontiers,
             self.current_rover_pos,
-            self.rover.radius
+            self.rover.radius,
+            agent=self.rover.name,
+            secondary_target=self.drone_frontier_target,
+            steps_per_action=1
         )
             
         # define action_mask to determine valid actions for this step 
@@ -264,6 +293,7 @@ class CustomEnvironment(ParallelEnv):
         return observations, rewards, terminated, truncated, infos    
     
     def render(self):
+        """Renders the plot of the ground truth map and the live status of the shared map"""
         self.drone_animation_frames = get_animation_frames(os.path.join(root, "./assets/drone.gif"))
         self.rover_animation_frames = get_animation_frames(os.path.join(root, "./assets/rover.gif"))
         
@@ -277,7 +307,7 @@ class CustomEnvironment(ParallelEnv):
             plt.ion()
             
             self.ax_ground_truth.set_title("Ground Truth")
-            self.ground_truth_img = self.ax_ground_truth.imshow(self.ground_truth, cmap="terrain", vmin=0, vmax=2, interpolation='bicubic')
+            self.ground_truth_img = self.ax_ground_truth.imshow(self.ground_truth, cmap="coolwarm", vmin=0, vmax=2.0,)
             self.mapped_img = self.ax_mapped.imshow(self.shared_belief_map, cmap="Greys", vmin=0, vmax=1)
             
             for ax in (self.ax_ground_truth, self.ax_mapped):
@@ -305,6 +335,7 @@ class CustomEnvironment(ParallelEnv):
         assert self.current_drone_pos is not None, f"Cannot plot drone, current_drone_pos is None"
         assert self.current_rover_pos is not None, f"Cannot plot rover, current_rover_pos is None"
         assert self.drone_animation_frames is not None and self.rover_animation_frames is not None
+        assert self.ax_ground_truth is not None and self.ax_mapped is not None
 
         drone_row, drone_col = self.current_drone_pos
         self.drone_annotation.xy = (drone_col, drone_row)
@@ -318,7 +349,14 @@ class CustomEnvironment(ParallelEnv):
         self.frame_idx += 1
         
         coverage = self._count_resolved_cells() / (self.height * self.width)
-        # TODO: plot coverage, step, battery level
+        drone_bat = self.drone.battery_level * 100
+        rover_bat = self.rover.battery_level * 100
+        
+        self.ax_mapped.set_title(
+            f"Shared Belief | Coverage: {coverage * 100:.1f}%\n Drone Bat: {drone_bat:.0f}% | Rover Bat: {rover_bat:.0f}%",
+             # f"Step count: {self._step_count}"
+            fontsize=9.5, fontweight="semibold"
+        )
         
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
@@ -326,14 +364,17 @@ class CustomEnvironment(ParallelEnv):
     
     @functools.cache
     def observation_space(self, agent: Any) -> Space: # type: ignore
+        """Defines observation shape: belief map + agent poses + packed frontiers + battery"""
         obs_size = (self.height * self.width) + 4 + (NUM_FRONTIERS * 3) + 1
         return Box(low=-1.0, high=1.0, shape=(obs_size,), dtype=np.float32)
     
     @functools.cache
     def action_space(self, agent: Any): # type: ignore
+        """Defines discrete action space: top k frontiers + wait action"""
         return Discrete(NUM_FRONTIERS + 1)
     
     def _global_state(self, observation: dict):
+        """Builds the global state for the centralized critic (all obs + ground truth + poses + batteries)"""
         assert self.cell_max_agent is not None
         assert self.current_drone_pos is not None
         assert self.current_rover_pos is not None
@@ -348,6 +389,7 @@ class CustomEnvironment(ParallelEnv):
                             ]).astype(np.float32)
 
     def _get_observations(self):
+        """Constructs local observation vector for each agent"""
         assert self.drone is not None
         assert self.rover is not None
         assert self.current_drone_pos is not None
@@ -356,7 +398,7 @@ class CustomEnvironment(ParallelEnv):
         
         drone_frontiers = self.drone.detect_frontiers()
         packed_drone_frontiers = pack_frontiers(
-            top_k_frontiers(self.shared_belief_map, drone_frontiers, self.current_drone_pos, self.drone.radius),
+            top_k_frontiers(self.shared_belief_map, drone_frontiers, self.current_drone_pos, self.drone.radius, self.drone.name, self.rover_frontier_target, DRONE_STEPS),
         )
         drone_observation = np.concatenate([
             self.drone.belief_state.flatten(),
@@ -368,7 +410,7 @@ class CustomEnvironment(ParallelEnv):
 
         rover_frontiers = self.rover.detect_frontiers()
         packed_rover_frontiers = pack_frontiers(
-            top_k_frontiers(self.shared_belief_map, rover_frontiers, self.current_rover_pos, self.rover.radius),
+            top_k_frontiers(self.shared_belief_map, rover_frontiers, self.current_rover_pos, self.rover.radius, self.rover.name, self.drone_frontier_target, 1),
         )
         rover_observation = np.concatenate([
             self.shared_belief_map.flatten(),
@@ -384,7 +426,8 @@ class CustomEnvironment(ParallelEnv):
         }
         return observations
         
-    def _map_action_to_frontier(self, action: int, scored_frontiers: list[tuple[int, int]]):
+    def _map_action_to_frontier(self, action: int, scored_frontiers: list):
+        """Maps chosen action index to a target frontier coordinate on the grid"""
         k = NUM_FRONTIERS
         if action == k: return None
         if not scored_frontiers: return None
@@ -407,6 +450,7 @@ class CustomEnvironment(ParallelEnv):
         return max(0.0, best_score - chosen_score) / best_score
 
     def _update_shared_belief(self, agent: Agent, current_pos: tuple[int, int]):
+        """Fuses an agent's observation into the shared belief map using Bayesian log-odds"""
         assert self.ground_truth is not None
         assert self.cell_max_agent is not None
         assert self.shared_belief_map is not None
@@ -414,7 +458,7 @@ class CustomEnvironment(ParallelEnv):
         observable_cells = get_observable_cells(agent.belief_state, current_pos, agent.radius)
 
         for r, c in observable_cells:
-            if self.cell_max_agent[r, c] != "" and agent.name == "drone": # drone can only overwrite unobserved cells
+            if self.cell_max_agent[r, c] == "rover" and agent.name == "drone": # drone can only overwrite a cell it observed
                 continue
 
             sensor_reading = agent.get_sensor_reading((r, c), self.ground_truth)
@@ -451,6 +495,7 @@ class CustomEnvironment(ParallelEnv):
         return int(np.sum((self.shared_belief_map < 0.2) | (self.shared_belief_map > 0.8)))
     
     def _get_reachable_frontiers(self, frontiers, current_pos) -> list:
+        """BFS on the rover's belief map to find frontiers that are not blocked by obstacles"""
         assert self.shared_belief_map is not None
 
         if not frontiers:
@@ -479,6 +524,7 @@ class CustomEnvironment(ParallelEnv):
         return reachable
 
     def _get_action_mask(self, num_frontiers):
+        """Creates a binary mask to disable actions for frontiers that do not exist"""
         k = NUM_FRONTIERS
         mask = np.zeros((k+1), dtype=np.float32)
         for i in range(min(k, num_frontiers)):

@@ -42,14 +42,15 @@ class Mappo:
         self.critic_optim = Adam(self.critic.parameters(), lr=self.learning_rate_critic)
         
     def _init_hyperparameters(self):
+        """Sets default training hyperparameters for MAPPO"""
         self.gamma = 0.95
         self.max_timesteps_per_episode = MAX_STEPS_PER_EPISODE
         self.num_episodes_per_batch = 128
         self.num_layers = 3
         self.hidden_dim = 64
         self.num_agents = 2
-        self.learning_rate_actor = 0.001
-        self.learning_rate_critic = 0.001
+        self.learning_rate_actor = 4e-3
+        self.learning_rate_critic = 5e-4
         self.td_lambda = 0.95
         self.epochs = 10
         self.batch_size = 64
@@ -58,12 +59,13 @@ class Mappo:
         self.max_grad_norm = 0.5
     
     def train(self, runs=10, resume=False):
+        """Main MAPPO training loop: collects rollout batches and runs mini-batch PPO updates"""
         start = 0
         log_path = os.path.join(root, "logs/training_log.csv")
         
         if resume:
             policy_path = os.path.join(root, "weights", "policy.pt")
-            if os.path.exists(log_path):
+            if os.path.exists(policy_path):
                 start = self._load_policy(policy_path) + 1
                 print(f"Resuming from training run: {start}")
             else:
@@ -214,6 +216,7 @@ class Mappo:
                 
         
     def _save_policy(self, run: int):
+        """Saves actor, critic, and optimizer checkpoints to disk"""
         checkpoint = {
             "run": run,
             "drone_actor": self.drone_actor.state_dict(),
@@ -227,6 +230,7 @@ class Mappo:
         torch.save(checkpoint, os.path.join(root, "weights/policy.pt"))
         
     def _load_policy(self, path):
+        """Loads model and optimizer weights from a checkpoint file"""
         checkpt = torch.load(path, map_location=self.device)
         self.drone_actor.load_state_dict(checkpt["drone_actor"])
         self.rover_actor.load_state_dict(checkpt["rover_actor"])
@@ -234,4 +238,4 @@ class Mappo:
         self.drone_actor_optim.load_state_dict(checkpt["drone_optim"])
         self.rover_actor_optim.load_state_dict(checkpt["rover_optim"])
         self.critic_optim.load_state_dict(checkpt["critic_optim"])
-        return 19 # todo: remove hardcoded value
+        return checkpt["run"]

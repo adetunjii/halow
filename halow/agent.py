@@ -32,6 +32,7 @@ class Agent:
             return FREE if np.random.random() < self.confidence.free else OCCUPIED
             
     def detect_frontiers(self):
+        """Finds free cells on the belief map that border unknown territory"""
         frontiers = []
         
         height, width = self.belief_state.shape
@@ -57,7 +58,7 @@ class Agent:
             prior = np.clip(self.belief_state[r, c], 0.01, 0.99)
             log_prior = np.log(prior / (1.0 - prior))
             
-            sensor_reading = self.get_sensor_reading(current_pos, ground_truth)
+            sensor_reading = self.get_sensor_reading((r, c), ground_truth)
             if sensor_reading == OCCUPIED:
                 log_reading = np.log(self.confidence.occupied / (1.0 - self.confidence.occupied))
             else:

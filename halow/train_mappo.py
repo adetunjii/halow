@@ -18,6 +18,8 @@ if __name__ == "__main__":
     env = make("parallel", "thesis/CustomGridv0")
 
     _, inf = customenv.reset()
-    policy = Mappo(customenv)
-    policy.train(runs=50, resume=True)
+    # policy = Mappo(customenv)
+    # policy.train(runs=20, resume=False)
+    while True:
+        customenv.render()
     

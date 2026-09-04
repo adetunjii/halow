@@ -1,7 +1,7 @@
 import numpy as np
 import heapq
 from PIL import Image, ImageSequence
-from halow.constants import neighboring_cells, HEIGHT, WIDTH, PATH_RESOLUTION, FREE, OCCUPIED
+from halow.constants import neighboring_cells, HEIGHT, WIDTH, PATH_RESOLUTION, FREE, OCCUPIED, FREE_THRESHOLD
 import random
 from noise import pnoise2
 import os
@@ -25,17 +25,25 @@ def get_observable_cells(belief_map: np.ndarray, current_pos: tuple[int, int], r
 
 def astar_search(grid: np.ndarray, start_pos, target_pos, threshold=0.6) -> list[tuple[int, int]] | None:
     """A* search for a viable path in a 2D grid given a start position and a target"""
-    
+    if start_pos is None or target_pos is None:
+        return None
+    if start_pos == target_pos:
+        return []
+        
     height, width = grid.shape
     
     def neighbors(position):
         r, c = position
         
-        for neighbor in neighboring_cells:
-            nr, nc = r + neighbor[0], c + neighbor[1]
+        for dr, dc in neighboring_cells:
+            nr, nc = r + dr, c + dc
             
             if 0 <= nr < height and 0 <= nc < width and grid[nr, nc] < threshold:
-                yield(nr, nc)
+                # prevent diagonal corner-cutting between two obstacles
+                if dr != 0 and dc != 0:
+                    if grid[r + dr, c] >= threshold or grid[r, c + dc] >= threshold:
+                        continue
+                yield (nr, nc)
                 
     openset = []
     visited = set()
@@ -67,8 +75,9 @@ def astar_search(grid: np.ndarray, start_pos, target_pos, threshold=0.6) -> list
                 continue
             
             distance = np.hypot(neighbor[0] - current_pos[0], neighbor[1] - current_pos[1])
-            
-            tentative_gcost = g_score[current_pos] + distance
+
+            risk_penalty = 1.0 + 2.0 * max(0.0, grid[neighbor[0], neighbor[1]] - FREE_THRESHOLD) # penalty term; always prefer free cells
+            tentative_gcost = g_score[current_pos] + distance * risk_penalty
             
             if tentative_gcost < g_score.get(neighbor, float('inf')):
                 parent[neighbor] = current_pos
@@ -77,10 +86,10 @@ def astar_search(grid: np.ndarray, start_pos, target_pos, threshold=0.6) -> list
                 h_cost = np.hypot(neighbor[0] - target_pos[0], neighbor[1] - target_pos[1])
                 f_cost = tentative_gcost + h_cost
                 heapq.heappush(openset, (f_cost, neighbor))
-    
     return None
 
 def interpolate_path(start_pos, target_pos):
+    """Generates a straight-line path for the drone since it can fly over obstacles"""
     start_row, start_col = start_pos
     target_row, target_col = target_pos
     
@@ -95,10 +104,12 @@ def interpolate_path(start_pos, target_pos):
     return list(zip(row_segment, col_segment))
 
 def normalize_pos(pos: tuple[int, int]) -> np.ndarray:
+    """Normalizes (row, col) coordinates to [0, 1] for neural network inputs"""
     row, col = pos
     return np.array([row/HEIGHT, col/WIDTH], dtype=np.float32)
 
 def get_animation_frames(path: str):
+    """Loads gif animation frames for sprite rendering"""
     try:
         img = Image.open(path)
     
@@ -111,6 +122,7 @@ def get_animation_frames(path: str):
         print(f"image path {path} does not exist")
 
 def generate_map(height, width, seed=None, scale=0.15, threshold=0.2):
+    """Generates an occupancy grid using 2D Perlin noise"""
     grid = np.full((height, width), FREE, dtype=np.float32)
     
     if seed is None:
@@ -119,7 +131,6 @@ def generate_map(height, width, seed=None, scale=0.15, threshold=0.2):
     for r in range(height):
         for c in range(width):
             value = pnoise2(c * scale + seed, r * scale + seed)
-            
             if value > threshold:
                 grid[r, c] = OCCUPIED
     
@@ -148,6 +159,7 @@ def setup_logger(path: str):
                 ])
 
 def log_run(log_path: str, run, episodes, critic_losses, drone_actor_losses, rover_actor_losses, drone_entropies, rover_entropies, drone_grad_norm, rover_grad_norm, critic_grad_norm):
+    """Appends summary statistics from one PPO training run to the CSV log"""
     # episode-level stats — computed before batchify() clears the buffer
     episode_returns_drone = [sum(r[0] for r in ep["rewards"]) for ep in episodes]
     episode_returns_rover = [sum(r[1] for r in ep["rewards"]) for ep in episodes]

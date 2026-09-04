@@ -8,6 +8,7 @@ from halow.constants import COVERAGE_TARGET
 root = os.path.dirname(__file__)
 
 def evaluate_policy(num_episodes=50, render=False):
+    """Evaluates the trained MAPPO policy on unseen procedural test seeds"""
     env = CustomEnvironment()
     device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -32,7 +33,7 @@ def evaluate_policy(num_episodes=50, render=False):
     eval_coverages, eval_lengths, successes = [], [], []
 
     # 2. Test across unseen seeds outside the [0, 10000) training set
-    test_seeds = range(10000, 10001)
+    test_seeds = range(10000, 10050)
 
     for seed in test_seeds:
         obs, infos = env.reset(seed=seed)

@@ -90,3 +90,4 @@ def plot_training_results(log_path=None, save_path=None):
 
 if __name__ == "__main__":
     plot_training_results()
+

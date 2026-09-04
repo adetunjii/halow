@@ -26,6 +26,7 @@ class RolloutBuffer:
         self.td_lambda = td_lambda
         
     def add(self, episode) -> None:
+        """Adds a completed episode to the buffer and computes its advantages"""
         final_value = episode.pop("final_value")
         eps = self.rollout_to_tensor(episode)
         eps["final_value"] = torch.tensor(final_value, dtype=torch.float32)
@@ -40,6 +41,7 @@ class RolloutBuffer:
         return eps
     
     def compute_advantages(self, episode):
+        """Computes TD(lambda) returns and GAE advantages backwards from episode end"""
         returns = torch.zeros_like(episode["rewards"], dtype=torch.float32)
         advantages = torch.zeros_like(episode["rewards"], dtype=torch.float32)
         N = episode["observations"].size(0)
@@ -58,6 +60,7 @@ class RolloutBuffer:
         del episode["values"]
             
     def batchify(self):
+        """Stacks all collected episodes into flattened tensors and normalizes advantages"""
         print("batchifying.....")
         length_per_episode = []
         total_obs_collected = 0
