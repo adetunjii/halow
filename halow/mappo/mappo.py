@@ -9,7 +9,7 @@ from torch.optim import Adam
 from typing import Any
 from halow.environment import CustomEnvironment
 from gymnasium.spaces import Discrete, Box
-from halow.constants import MAX_STEPS_PER_EPISODE
+from halow.constants import MAX_STEPS_PER_EPISODE, COMMUNICATION_NOISE_SCALE
 from halow.helpers import setup_logger, log_run
 import numpy as np
 # import cProfile
@@ -227,7 +227,7 @@ class Mappo:
             "critic_optim": self.critic_optim.state_dict()
         }
         torch.save(checkpoint, os.path.join(root, f"weights/checkpoint_run_{run}.pt"))
-        torch.save(checkpoint, os.path.join(root, "weights/policy.pt"))
+        torch.save(checkpoint, os.path.join(root, f"weights/policy_nl_{COMMUNICATION_NOISE_SCALE}.pt"))
         
     def _load_policy(self, path):
         """Loads model and optimizer weights from a checkpoint file"""
